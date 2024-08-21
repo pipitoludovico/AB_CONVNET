@@ -15,10 +15,9 @@ def WriteTleapInput():
     os.makedirs('gbsa', exist_ok=True)
     _ = ["source leaprc.protein.ff19SB", "source leaprc.gaff2", "source leaprc.water.tip3p",
          "set default PBRadii mbondi3",
-         'rec = loadpdb "pdb4amber/receptor.pdb"', 'saveamberparm rec gbsa/receptor.prmtop gbsa/receptor.inpcrd',
-         'lig = loadpdb "pdb4amber/ligand.pdb"', 'saveamberparm lig gbsa/ligand.prmtop gbsa/ligand.inpcrd',
-         'com = loadpdb "pdb4amber/complex.pdb"', 'setBox com "vdw"',
-         'saveamberparm com gbsa/complex.prmtop gbsa/complex.inpcrd',
+         'rec = loadpdb "initial/receptor_initial.pdb"', "check rec", 'saveamberparm rec gbsa/receptor.prmtop gbsa/receptor.inpcrd',
+         'lig = loadpdb "initial/ligand_initial.pdb"', 'check lig', 'saveamberparm lig gbsa/ligand.prmtop gbsa/ligand.inpcrd',
+         'com = loadpdb "initial/complex_initial.pdb"', 'check com', 'saveamberparm com gbsa/complex.prmtop gbsa/complex.inpcrd',
          'quit']
 
     with open('inleap', 'w') as inleap:

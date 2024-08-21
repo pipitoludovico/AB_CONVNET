@@ -5,6 +5,7 @@ from Amberizer.DbManager import DatabaseManager
 from Amberizer.TrajectoryMaker import TrajectoryMaker
 from Interfacer.PeStO import *
 from Featurizer.FeatureMaker import FeaturizerClass
+
 from warnings import filterwarnings
 
 filterwarnings(action='ignore')
@@ -19,6 +20,7 @@ def main():
     csvDb = path.abspath(sys.argv[1])
     pdbsFolder = path.abspath(sys.argv[2])
     dbManager = DatabaseManager(csvDb, pdbsFolder)
+
     dbDict = dbManager.CopyFilesFromFolderToTarget(copy_=True)
     TrajMaker = TrajectoryMaker(dbDict)
     TrajMaker.ParallelPipeline()
@@ -26,9 +28,8 @@ def main():
     featurizer = FeaturizerClass(dbDict, root)
     featurizer.ParallelFeaturize()
     df = featurizer.GetDataAsDataframe()
-    pd.DataFrame.to_csv(df, 'zio.csv', index=True)
-    nan_count = df.isna().sum()
-    print(nan_count)
+    pd.DataFrame.to_csv(df, 'output.csv', index=True)
+    dataArrays = featurizer.GetCouples()
 
 
 if __name__ == '__main__':
