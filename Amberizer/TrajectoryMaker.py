@@ -8,7 +8,7 @@ from Interfacer.VMD import GetVDWcontacts
 
 
 def RunMMPBSA() -> None:
-    run(f"$AMBERHOME/bin/MMPBSA.py -i mmgbsa.in -o results_mmgbsa.dat -cp gbsa/complex.prmtop -rp gbsa/receptor.prmtop -lp gbsa/ligand.prmtop -y complex_minimized_chains.pdb -eo gbsa.csv > logs/GBSA.log 2>&1",
+    run(f"/home/scratch/software/amber20/bin/MMPBSA.py -i mmgbsa.in -o results_mmgbsa.dat -cp gbsa/complex.prmtop -rp gbsa/receptor.prmtop -lp gbsa/ligand.prmtop -y complex_minimized_chains.pdb -eo gbsa.csv > logs/GBSA.log 2>&1",
         shell=True, stdout=DEVNULL, stderr=DEVNULL)
     if not os.path.exists('results_mmgbsa.dat'):
         run(f"touch GBSA_FAILED", shell=True)
@@ -34,7 +34,7 @@ class TrajectoryMaker:
         self.dbDict = dbDict
         self.ROOT = os.getcwd()
 
-    def MakeTrajectoryFromPDB(self, pdb, chains_) -> None:
+    def MakeTrajectoryFromPDB(self, pdb: str, chains_) -> None:
         chdir(f'./selected/{pdb}')
         os.makedirs('./logs', exist_ok=True)
         try:
@@ -42,37 +42,34 @@ class TrajectoryMaker:
                 # run(f"pdb4amber -i {pdb}.pdb -o {pdb}_pdb4amber.pdb -y -d -a -p  >> logs/initial_pdb4amber.log 2>&1;rm {pdb}_pdb4amber_*;", shell=True)  # cleaning the structure
                 run(f"pdb4amber -i {pdb}.pdb -o {pdb}_pdb4amber.pdb -y -d >> logs/initial_pdb4amber.log 2>&1;rm {pdb}_pdb4amber_*;",
                     shell=True)  # cleaning the structure
-                run(f"prepareProtein.py {pdb}_pdb4amber.pdb cytosol > logs/prepareProtein.log 2>&1", shell=True,
-                    stdout=DEVNULL, stderr=DEVNULL)  # writes Protein_H.pdb
-            if not os.path.exists('protein_H.pdb'):
-                run(f"pdb4amber -i {pdb}.pdb -o {pdb}_pdb4amber.pdb -y -d -a -p >> logs/initial_pdb4amber.log 2>&1;rm {pdb}_pdb4amber_*;",
-                    shell=True)  # cleaning the structure
-                run(f"prepareProtein.py {pdb}_pdb4amber.pdb cytosol > logs/prepareProtein_secondAttempt.log 2>&1",
-                    shell=True, stdout=DEVNULL, stderr=DEVNULL)  # writes Protein_H.pdb
+                # run(f"prepareProtein.py {pdb}_pdb4amber.pdb cytosol > logs/prepareProtein.log 2>&1", shell=True, stdout=DEVNULL, stderr=DEVNULL)  # writes Protein_H.pdb
+            # if not os.path.exists('protein_H.pdb'):
+            #     run(f"pdb4amber -i {pdb}.pdb -o {pdb}_pdb4amber.pdb -y -d -a -p >> logs/initial_pdb4amber.log 2>&1;rm {pdb}_pdb4amber_*;",
+            #         shell=True)  # cleaning the structure
+                # run(f"prepareProtein.py {pdb}_pdb4amber.pdb cytosol > logs/prepareProtein_secondAttempt.log 2>&1", shell=True, stdout=DEVNULL, stderr=DEVNULL)  # writes Protein_H.pdb
             if not os.path.exists('gbsa/') and not os.path.exists('initial/'):
-                SplitAndTleap(pdb=pdb, chains=chains_)
-            if not os.path.exists('contacts.int') or not os.path.exists('complex_minimized.pdb'):
+                SplitAndTleap(pdb=pdb+"_pdb4amber.pdb", chains=chains_)
+            if not os.path.exists('complex_minimized.pdb'):
                 chainsID = TrajectorizePDB(pdb)
-                if chainsID:
-                    if len(chainsID) >= 3:
-                        try:
-                            GetVDWcontacts((chainsID[0], chainsID[1]), chainsID[2])
-                        except:
-                            GetVDWcontacts((chainsID[0], chainsID[0]), chainsID[1])
-                    if len(chainsID) == 2:
-                        try:
-                            GetVDWcontacts((chainsID[0], chainsID[0]), chainsID[1])
-                        except:
-                            GetVDWcontacts((chainsID[0], chainsID[1]), chainsID[0])
-                    else:
-                        chdir(self.ROOT)
-                        return
+                if not os.path.exists('complex_minimized_chains.pdb'):
+                    if not os.path.exists('contacts.int'):
+                        if chainsID:
+                            if len(chainsID) >= 3:
+                                try:
+                                    GetVDWcontacts((chainsID[0], chainsID[1]), chainsID[2])
+                                except:
+                                    GetVDWcontacts((chainsID[0], chainsID[0]), chainsID[1])
+                            if len(chainsID) == 2:
+                                try:
+                                    GetVDWcontacts((chainsID[0], chainsID[0]), chainsID[1])
+                                except:
+                                    GetVDWcontacts((chainsID[0], chainsID[1]), chainsID[0])
             if not os.path.exists('results_mmgbsa.dat') and not os.path.exists('FINAL_DECOMP_MMPBSA.dat') and not os.path.exists("GBSA_FAILED"):
                 WritePBSAinput()
                 RunMMPBSA()
         except:
             with open('../../failed.txt', 'a') as failFile:
-                failFile.write(pdb + " failed.\n")
+                failFile.write(pdb + "  GBSA failed.\n")
             chdir(self.ROOT)
         chdir(self.ROOT)
 

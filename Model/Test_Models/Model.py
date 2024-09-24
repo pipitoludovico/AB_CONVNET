@@ -2,12 +2,14 @@ import os
 
 import numpy as np
 import tensorflow as tf
-
+from keras.callbacks import Callback
+from keras.models import Sequential
+from keras import layers
 np.random.seed(42)
 tf.random.set_seed(42)
 
 
-class myCallback(tf.keras.callbacks.Callback):
+class myCallback(Callback):
     def on_epoch_end(self, epoch, logs=None):
         if logs is None:
             logs = {}
@@ -18,53 +20,17 @@ class myCallback(tf.keras.callbacks.Callback):
 
 callbacks = myCallback()
 
-sampl = np.random.uniform(low=-10, high=10, size=(5000, 222))
-new_column = np.random.choice([0, 1], size=(5000, 1)).astype(int)
-sampl = np.column_stack((sampl, new_column))
-
-training = sampl[:3200]
-test = sampl[3200:]
-
-training_features = training[:, :-1]
-training_labels = training[:, -1]
-
-test_features = test[:, :-1]
-test_labels = test[:, -1]
-
 if not os.path.exists('model_ludo.h5'):
-
-    # import tensorflow as tf
-    # from tensorflow.keras.models import Sequential
-    # from tensorflow.keras.layers import Dense, Conv1D, Flatten, Masking, TimeDistributed
-    #
-    # # Define the model
-    # model = Sequential([
-    #     Masking(mask_value=0.0, input_shape=(max_pairs, padded_protein_data.shape[2])),
-    #     TimeDistributed(Conv1D(32, kernel_size=3, activation='relu')),
-    #     TimeDistributed(Flatten()),
-    #     TimeDistributed(Dense(64, activation='relu')),
-    #     TimeDistributed(Dense(1, activation='linear'))
-    # ])
-    #
-    # # Compile the model
-    # model.compile(optimizer='adam', loss='mean_squared_error')
-    #
-    # # Train the model
-    # model.fit(padded_protein_data, padded_scores_data, epochs=10, batch_size=1)
-    #
-    # # Print the model summary
-    # model.summary()
-
-    model = tf.keras.models.Sequential([
-        tf.keras.layers.Reshape((222, 1), input_shape=(222,)),  # Reshape for compatibility with 1D convolution
-        tf.keras.layers.Conv1D(32, 3, activation='relu'),
-        tf.keras.layers.MaxPooling1D(2),
-        tf.keras.layers.Conv1D(64, 3, activation='relu'),
-        tf.keras.layers.MaxPooling1D(2),
-        tf.keras.layers.Flatten(),
-        tf.keras.layers.Dense(128, activation='relu'),
-        tf.kera.layers.Dropout(0.2),
-        tf.keras.layers.Dense(1, activation='sigmoid'),  # Sigmoid activation for binary classification
+    model = Sequential([
+        layers.Reshape((222, 1), input_shape=(222,)),  # Reshape for compatibility with 1D convolution
+        layers.Conv1D(32, 3, activation='relu'),
+        layers.MaxPooling1D(2),
+        layers.Conv1D(64, 3, activation='relu'),
+        layers.MaxPooling1D(2),
+        layers.Flatten(),
+        layers.Dense(128, activation='relu'),
+        layers.Dropout(0.2),
+        layers.Dense(1, activation='sigmoid'),  # Sigmoid activation for binary classification
     ])
 
     model.compile(optimizer='adam',

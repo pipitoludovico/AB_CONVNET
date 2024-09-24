@@ -1,14 +1,9 @@
+import os.path
 from os import cpu_count, chdir, makedirs
-from multiprocessing import Pool, Manager
-import tensorflow as tf
-
-import pandas as pd
+from multiprocessing import Pool
+from subprocess import run
 import numpy as np
 import logging
-
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-
-features = ['GBSA', 'NumContacts', 'NumPatches']
 
 
 class FeaturizerClass:
@@ -16,18 +11,12 @@ class FeaturizerClass:
         self.dbDict = dbDict
         self.root = root
         self.datFile = "FINAL_DECOMP_MMPBSA.dat"
-        self.dataframe = pd.DataFrame(columns=[*features], dtype=float)
-        self.couples = {}
 
-    def Featurize(self, pdbID: str, shared_list: list, shared_couples: dict) -> None:
+    def Featurize(self, pdbID: str) -> None:
         try:
             chdir("selected/" + pdbID)
             dec_res = self.GetDecomp()
-            df: pd.DataFrame = self.dataframe.copy()
-            shared_dic = self.update_dataframe(df, pdbID, dec_res)
-            shared_couples[pdbID] = shared_dic[pdbID]  # Update the shared dictionary
-            shared_list.append(df)  # Append modified dataframe to the shared list
-            logging.debug(f"Appended DataFrame for {pdbID}")
+            self.BuildMatrix(pdbID, dec_res)
         except Exception as e:
             logging.error(f"Error processing {pdbID}: {e}")
         finally:
@@ -54,121 +43,110 @@ class FeaturizerClass:
                         resname = lines[0:4].strip()
                         resnum = lines[4:7].strip()
                         total_energy = float(lines.split(",")[-3])
-                        if (resname + ":" + resnum) not in dec_results:
-                            dec_results[resname + ":" + resnum] = total_energy
+                        if (resname + resnum) not in dec_results:
+                            dec_results[resname + resnum] = total_energy
 
         WriteTotalFromDecomp()
         GetResults()
         return dec_results
 
     @staticmethod
-    def update_dataframe(df_, pdbID: str, dec_res_: dict) -> dict:
-        interfaceRes = []
-        coordinates = {}
-        with open('patches/selection_i0.pdb', 'r') as interfaceFile:
-            for line in interfaceFile.readlines():
-                if len(line.split()) > 2:
-                    if float(line.split()[10]) > 0.15:
-                        residueID = line.split()[3] + ":" + line[23:27].strip()
-                        if residueID not in interfaceRes:
-                            interfaceRes.append(residueID)
+    def BuildMatrix(pdbID: str, dec_res_: dict) -> np.array:
+        elements = {'H': 1.008, 'He': 4.002, 'Li': 6.941, 'Be': 9.012, 'B': 10.811, 'C': 12.011, 'N': 14.007,
+                    'O': 15.999, 'F': 18.998, 'Ne': 20.180, 'Na': 22.990, 'Mg': 24.305, 'Al': 26.982, 'Si': 28.085,
+                    'P': 30.974, 'S': 32.066, 'Cl': 35.453, 'Ar': 39.948, 'K': 39.098, 'Ca': 40.078, 'Sc': 44.956,
+                    'Ti': 47.867, 'V': 50.942, 'Cr': 51.996, 'Mn': 54.938, 'Fe': 55.845, 'Co': 58.933, 'Ni': 58.693,
+                    'Cu': 63.546, 'Zn': 65.38, 'Ga': 69.723, 'Ge': 72.64, 'As': 74.922, 'Se': 78.96, 'Br': 79.904,
+                    'Kr': 83.798, 'Rb': 85.468, 'Sr': 87.62, 'Y': 88.906, 'Zr': 91.224, 'Nb': 92.906, 'Mo': 95.96,
+                    'Tc': 98.0, 'Ru': 101.07, 'Rh': 102.906, 'Pd': 106.42, 'Ag': 107.868, 'Cd': 112.411, 'In': 114.818,
+                    'Sn': 118.71, 'Sb': 121.76, 'Te': 127.6, 'I': 126.904, 'Xe': 131.293, 'Cs': 132.905, 'Ba': 137.327,
+                    'La': 138.905, 'Ce': 140.116, 'Pr': 140.908, 'Nd': 144.242, 'Pm': 145.0, 'Sm': 150.36,
+                    'Eu': 151.964,
+                    'Gd': 157.25, 'Tb': 158.925, 'Dy': 162.5, 'Ho': 164.930, 'Er': 167.259, 'Tm': 168.934, 'Yb': 173.04,
+                    'Lu': 174.967, 'Hf': 178.49, 'Ta': 180.948, 'W': 183.84, 'Re': 186.207, 'Os': 190.23, 'Ir': 192.217,
+                    'Pt': 195.084, 'Au': 196.967, 'Hg': 200.59, 'Tl': 204.383, 'Pb': 207.2, 'Bi': 208.980,
+                    'Th': 232.038,
+                    'Pa': 231.036, 'U': 238.029}
+        finalCoordinates = {}
+        tempPesto = {}
+        GBSA: float = -1.0
 
-        df_.at[pdbID, 'Nprotein_data.numPatches'] = len(interfaceRes)
-
-        for resname, energy in dec_res_.items():
-            if resname in interfaceRes:
-                df_.at[pdbID, resname] = energy
-
-        with open('results_mmgbsa.dat', 'r') as GBSA:
-            for line in GBSA.readlines():
+        # we get the total GBSA
+        with open('results_mmgbsa.dat', 'r') as GBSAfile:
+            for line in GBSAfile.readlines():
                 if "DELTA TOTAL" in line:
                     GBSA = float(line.split()[2])
-                    df_.at[pdbID, 'GBSA'] = GBSA
                     break
-
-        with open('complex_minimized_chains.pdb', 'r') as complexPDB:
-            for line in complexPDB.readlines():
-                if len(line.split()) > 4:
-                    resname_pdb = line[17:21].strip()
-                    resid_pdb = line[22:27].strip()
-                    x = float(line[30:38].strip())
-                    y = float(line[38:46].strip())
-                    z = float(line[46:54].strip())
-                    key = resname_pdb + ":" + resid_pdb
-                    if key not in coordinates.keys():
-                        coordinates[key.replace("\n", "")] = []
-                    coordinates[key.replace("\n", '')].append(np.array([x, y, z]))
-
-        for key in coordinates.keys():
-            coordinates[key] = np.vstack(coordinates[key])
-        shared_couples = {pdbID: []}
+        # we convert the complex to get the information we need
+        if not os.path.exists('complex_minimized.mol2'):
+            run("obabel -i pdb complex_minimized_chains.pdb -o mol2 -O complex_minimized.mol2 > logs/obabelLog.log",
+                shell=True)
+        couples = []
+        # we check contact points between Ab and Ag and make the pairs
         with open('contacts.int', 'r') as contacts:
             contact_content = contacts.read()
             results = contact_content.replace("\n", '').split(',')[1:]
-            numContacts = contact_content.split(",")[0]
-            df_.at[pdbID, 'NumContacts'] = numContacts
-            for result in results:
-                lig_res = result.split("-")[0]
-                rec_res = result.split("-")[1]
+            # numContacts = contact_content.split(",")[0]
+            for couple in results:
+                couples.append(couple)
 
-                lig_energy = np.full((coordinates[lig_res].shape[0], 1), dec_res_[lig_res])
-                rec_energy = np.full((coordinates[rec_res].shape[0], 1), dec_res_[rec_res])
+        # and we add, if any, the % of molecular surface patch % to the score. This is where we build the final matrix.
+        with open('complex_minimized.mol2', 'r') as complexMOL2, open('patches/selection_i0.pdb') as PestoFile:
+            finalCoordinates[pdbID] = {}
+            tempPesto[pdbID] = {}
+            pestoPDB = PestoFile.readlines()
+            for line in pestoPDB:
+                if len(line.split()) > 5:
+                    residueID = line.split()[3] + line[23:27].strip()
+                    interfaceProb = line[56:61].strip()
+                    tempPesto[pdbID][str(residueID)] = interfaceProb
 
-                lig_score_stack = np.hstack((coordinates[lig_res], lig_energy))
-                rec_score_stack = np.hstack((coordinates[rec_res], rec_energy))
-                # print(np.reshape(lig_score_stack, -1)) # diventa 1D
-                # print(lig_score_stack) # [[]] x numbero di coppie => ok?
-                # print(np.vstack((lig_score_stack, rec_score_stack))) # probabilmente è questo...
+            for line in complexMOL2.readlines():
+                if len(line.split()) > 5:
+                    x, y, z, atomType, partialCharge, ResidAndResnum = line[17:27].strip(), line[28:38].strip(), line[38:46].strip(), line[47:51].strip(), line[69:78].strip(), line[58:68].strip()
+                    x, y, z, partialCharge = map(float, [x, y, z, partialCharge])
+                    prob = float(tempPesto[pdbID].get(ResidAndResnum, 0))
+                    if ResidAndResnum not in finalCoordinates[pdbID]:
+                        finalCoordinates[pdbID][ResidAndResnum] = []
+                        finalCoordinates[pdbID][ResidAndResnum].append(
+                            np.array([elements[atomType.split(".")[0]], partialCharge, x, y, z, prob]))
+                    else:
+                        finalCoordinates[pdbID][ResidAndResnum].append(
+                            np.array([elements[atomType.split(".")[0]], partialCharge, x, y, z, prob]))
+        dataList = []
+        for pair in couples:
+            res1, res2, = pair.split("-")[0], pair.split("-")[1]
+            dec1, dec2 = dec_res_.get(res1, 0), dec_res_.get(res2, 0)
+            combDecomp = float(dec1 + dec2)
+            arr1, arr2 = np.array(finalCoordinates[pdbID][res1]), np.array(finalCoordinates[pdbID][res2])
+            arrayList = [arr1, arr2]
 
-                # shared_couples.append([np.reshape(lig_score_stack, -1), np.reshape(rec_score_stack, -1)])
-                shared_couples[pdbID].append(np.vstack((lig_score_stack, rec_score_stack)))
-        return shared_couples
+            max_len = max([arr.shape[0] for arr in arrayList])
+            # we pad before stacking
+            if arr1.shape[0] < arr2.shape[0]:
+                paddedarr1 = np.pad(arr1, ((0, max_len - arr1.shape[0]), (0, 0)), 'constant', constant_values=0)
+                paddedarr2 = arr2
+            else:
+                paddedarr1 = arr1
+                paddedarr2 = np.pad(arr2, ((0, max_len - arr2.shape[0]), (0, 0)), 'constant', constant_values=0)
+            a3 = np.hstack((paddedarr1, paddedarr2))
+            combDecomp_array = np.full((a3.shape[0], 1), combDecomp)
+            GBSA_array = np.full((a3.shape[0], 1), GBSA)
+            a4 = np.hstack((a3, combDecomp_array, GBSA_array))
+            zero_count = np.sum(a4 == 0, axis=1)
+            filtered_arr = a4[zero_count < 6]
+            dataList.append(filtered_arr)
+        dataMatrix = np.vstack(np.array(dataList))
+        with open('../../summary', 'a') as summaryLog:
+            summaryLog.write(f"\nTotal number of pair contacts in pdb {pdbID} = {dataMatrix.shape}")
+        with open('./saved_results/protein_data.npy', 'wb') as f:
+            np.save(f, dataMatrix, allow_pickle=True)
 
     def ParallelFeaturize(self) -> None:
         cpuUnits = int(cpu_count() // 4)
-        manager = Manager()
-        shared_list = manager.list()  # Create a shared list
-        shared_couples = manager.dict()
         with Pool(processes=cpuUnits) as p:
             for pdbID, chains in self.dbDict.items():
-                logging.debug(f"Starting Featurize for {pdbID}")
-                p.apply_async(self.Featurize, args=(pdbID, shared_list, shared_couples,))
+                p.apply_async(self.Featurize, args=(pdbID,))
             p.close()
             p.join()
-
-        logging.debug("All processes have completed. Concatenating DataFrames.")
-        for df in shared_list:
-            self.dataframe = pd.concat([self.dataframe, df])
-        self.dataframe.fillna(0, inplace=True)
-        logging.debug("Final DataFrame concatenated and filled with NaNs replaced by 0.")
-        self.couples = dict(shared_couples)
-        del shared_couples
-        logging.debug("Adding couples to the final array.")
-
-    def GetDataAsDataframe(self) -> pd.DataFrame:
-        return self.dataframe
-
-    def GetCouples(self):
-        max_lengths = [max(array.shape[0] for array in coords) for coords in self.couples.values()]
-
-        num_samples = len(self.couples)
-        max_length = max(max_lengths)
-        num_features = 4  # this is how I want the tensor: x, y, z, (gbsa for that receptor)
-
-        protein_data = np.zeros((num_samples, max_length, num_features), dtype=np.float32)
-
-        for i, (pdb, coords) in enumerate(self.couples.items()):
-            for j, array in enumerate(coords):
-                protein_data[i, :array.shape[0], :] = array
-
-        protein_data_tensor = tf.convert_to_tensor(protein_data)
-        dataset = tf.data.Dataset.from_tensor_slices(protein_data_tensor)
-        # Save the dataset
-        makedirs('saved_results')
-        tf.data.experimental.save(dataset, './saved_results/protein_data')
-
-        tensor_string = tf.io.serialize_tensor(protein_data_tensor)
-        tf.io.write_file('./saved_results/protein_data.tfrecord', tensor_string)
-
-        np.save('./saved_results/protein_data.npy', protein_data)
-        return protein_data_tensor
+        logging.debug("All processes have completed.")

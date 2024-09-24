@@ -10,7 +10,7 @@ warnings.filterwarnings(action='ignore')
 
 def CopyAndSplitSystem(pdb: str, chains: list, x_range, y_range, z_range) -> None:
     try:
-        u = Mda.Universe(f'protein_H.pdb')
+        u = Mda.Universe(pdb)
         u.dimensions = np.array([[x_range, y_range, z_range, 90, 90, 90]])
         SeparateComplex(u, chains)
     except Exception as e:
@@ -91,7 +91,7 @@ def GetCrystalCoords(filePath):
 
 
 def SplitAndTleap(pdb, chains):
-    x_range, y_range, z_range = GetCrystalCoords(f"protein_H.pdb")
+    x_range, y_range, z_range = GetCrystalCoords(pdb)
     if not os.path.exists('initial') or not os.path.exists('gbsa') or not os.path.exists('pdb4amber'):
         CopyAndSplitSystem(pdb, chains, x_range, y_range, z_range)
         WriteTleapInput()

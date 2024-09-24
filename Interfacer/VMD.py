@@ -10,7 +10,7 @@ def GetVDWcontacts(abChains, agChains):
                         '    set frameCount2 [atomselect $mol "$sel2 and noh and within 3.5 of ($sel1 and noh)"]',
                         '', '    set uniqueContacts [list]', '', '    foreach a [$frameCount1 get {resname resid}] {',
                         '      foreach b [$frameCount2 get {resname resid}] {',
-                        '        set contact [concat [lindex $a 0]:[lindex $a 1] "-" [lindex $b 0]:[lindex $b 1]]',
+                        '        set contact [concat [lindex $a 0][lindex $a 1] "-" [lindex $b 0][lindex $b 1]]',
                         '        if {[lsearch -exact $uniqueContacts $contact] == -1} {',
                         '          lappend uniqueContacts $contact', '        }', '      }', '    }', '',
                         '    set numContacts [llength $uniqueContacts]', '', '    lappend allCounts $numContacts', '',

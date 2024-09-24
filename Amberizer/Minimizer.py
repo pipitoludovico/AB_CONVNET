@@ -4,10 +4,16 @@ from subprocess import run
 
 def AMBERLocalMinimization():
     sanderInputMinimization = [
-        "Minimization of the system", " &cntrl", "  imin=1,       ! Minimization",
-        "  maxcyc=1000,  ! Maximum number of cycles", "  ntpr=100,     ! Print frequency",
-        "  ntwx=500,     ! Write trajectory frequency", "  cut=12.0,     ! Cutoff for nonbonded interactions",
-        "  ntb=0,        ! Periodic boundary conditions (constant volume)", "  igb=8,        ! No implicit solvent",
+        "Minimization of the system",
+        " &cntrl",
+        "  imin= 1,       ! Minimization",
+        "  maxcyc= 500,   ! Maximum number of cycles",
+        "  ncyc= 250",
+        "  ntpr=250,     ! Print frequency",
+        "  ntwx=500,     ! Write trajectory frequency",
+        "  cut=12.0,     ! Cutoff for nonbonded interactions",
+        "  ntb=0,        ! Periodic boundary conditions (constant volume)",
+        "  igb=8,        ! No implicit solvent",
         " /"]
     with open('minimize.in', 'w') as sandFile:
         for line in sanderInputMinimization:
