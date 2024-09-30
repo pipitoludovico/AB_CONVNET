@@ -6,6 +6,7 @@ from keras.regularizers import l2
 from keras.models import Model
 from keras.callbacks import ModelCheckpoint
 from sys import maxsize
+import matplotlib.pyplot as plt
 
 np.set_printoptions(threshold=maxsize)
 
@@ -54,5 +55,15 @@ def TrainModel(args_):
     model.compile(optimizer=Adam(learning_rate=args_["lr"]), loss='mean_squared_error')
     checkpoint = ModelCheckpoint(f'{args_["name"]}_lr{args_["lr"]}_l2{args_["l2"]}_best.keras', monitor='val_loss',
                                  save_best_only=True, mode='min', verbose=1)
-    model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, validation_data=(X_test, y_test),
-              callbacks=[checkpoint])
+
+    history = model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, validation_data=(X_test, y_test),
+                        callbacks=[checkpoint])
+
+    plt.plot(history.history['loss'], label='Training Loss')
+    plt.plot(history.history['val_loss'], label='Validation Loss')
+    plt.title('Loss and Validation Loss Over Epochs')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+
+    plt.savefig(f'{args_["name"]}_loss_plot.png')
