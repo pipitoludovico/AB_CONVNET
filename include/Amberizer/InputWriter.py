@@ -1,4 +1,4 @@
-import os
+from os import makedirs
 
 
 def WritePBSAinput():
@@ -12,7 +12,7 @@ def WritePBSAinput():
 
 
 def WriteTleapInput():
-    os.makedirs('gbsa', exist_ok=True)
+    makedirs('gbsa', exist_ok=True)
     _ = ["source leaprc.protein.ff19SB", "source leaprc.gaff2", "source leaprc.water.tip3p",
          "set default PBRadii mbondi3",
          'rec = loadpdb "initial/receptor_initial.pdb"', "check rec", 'saveamberparm rec gbsa/receptor.prmtop gbsa/receptor.inpcrd',

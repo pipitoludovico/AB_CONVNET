@@ -1,14 +1,12 @@
-import os
-from os import path, getcwd
-import sys
-from Amberizer.DbManager import DatabaseManager
-from Amberizer.TrajectoryMaker import TrajectoryMaker
-from Interfacer.PeStO import *
-from Featurizer.FeatureMaker import FeaturizerClass
-from Model.MLR import LoadData
+from include.Amberizer.DbManager import DatabaseManager
+from include.Amberizer.TrajectoryMaker import TrajectoryMaker
+from include.Featurizer.FeatureMaker import FeaturizerClass
+from include.Interfacer.PeStO import ParallelPesto
+from Model.MatrixFormatter import *
+from Model.BuildMLR import *
 
 from warnings import filterwarnings
-from CLIparser.CLIparser import ParseCLI
+from include.CLIparser.CLIparser import ParseCLI
 
 filterwarnings(action='ignore')
 
@@ -17,6 +15,7 @@ root = getcwd()
 
 def main():
     args = ParseCLI()
+    print(args)
     if args['datapipeline']:
         csvDb = path.abspath(args['csv'])
         pdbsFolder = path.abspath(args['database'])
@@ -29,7 +28,8 @@ def main():
         featurizer = FeaturizerClass(dbDict, root)
         featurizer.ParallelFeaturize()
     if args['train']:
-        LoadData()
+        FormatData()
+        TrainModel(args)
 
 
 if __name__ == '__main__':

@@ -13,6 +13,9 @@ class FeaturizerClass:
         self.datFile = "FINAL_DECOMP_MMPBSA.dat"
 
     def Featurize(self, pdbID: str) -> None:
+        if not os.path.exists("selected/" + pdbID + "/" + self.datFile):
+            chdir(self.root)
+            return
         try:
             chdir("selected/" + pdbID)
             dec_res = self.GetDecomp()
@@ -39,12 +42,13 @@ class FeaturizerClass:
                 for lines in after_header:
                     if lines == "" or lines == " " or lines == "\n":
                         continue
-                    if lines.split()[1].split(',')[1] == "R" or lines.split()[1].split(',')[1] == 'L':
-                        resname = lines[0:4].strip()
-                        resnum = lines[4:7].strip()
-                        total_energy = float(lines.split(",")[-3])
-                        if (resname + resnum) not in dec_results:
-                            dec_results[resname + resnum] = total_energy
+                    if len(lines.split()) > 3:
+                        if lines.split()[1].split(',')[1] == "R" or lines.split()[1].split(',')[1] == 'L':
+                            resname = lines[0:4].strip()
+                            resnum = lines[4:7].strip()
+                            total_energy = float(lines.split(",")[-3])
+                            if (resname + resnum) not in dec_results:
+                                dec_results[resname + resnum] = total_energy
 
         WriteTotalFromDecomp()
         GetResults()
@@ -89,7 +93,6 @@ class FeaturizerClass:
             # numContacts = contact_content.split(",")[0]
             for couple in results:
                 couples.append(couple)
-
         # and we add, if any, the % of molecular surface patch % to the score. This is where we build the final matrix.
         with open('complex_minimized.mol2', 'r') as complexMOL2, open('patches/selection_i0.pdb') as PestoFile:
             finalCoordinates[pdbID] = {}
@@ -98,29 +101,32 @@ class FeaturizerClass:
             for line in pestoPDB:
                 if len(line.split()) > 5:
                     residueID = line.split()[3] + line[23:27].strip()
-                    interfaceProb = line[56:61].strip()
+                    interfaceProb = line[56:62].strip()
                     tempPesto[pdbID][str(residueID)] = interfaceProb
 
             for line in complexMOL2.readlines():
                 if len(line.split()) > 5:
-                    x, y, z, atomType, partialCharge, ResidAndResnum = line[17:27].strip(), line[28:38].strip(), line[38:46].strip(), line[47:51].strip(), line[69:78].strip(), line[58:68].strip()
-                    x, y, z, partialCharge = map(float, [x, y, z, partialCharge])
-                    prob = float(tempPesto[pdbID].get(ResidAndResnum, 0))
-                    if ResidAndResnum not in finalCoordinates[pdbID]:
-                        finalCoordinates[pdbID][ResidAndResnum] = []
-                        finalCoordinates[pdbID][ResidAndResnum].append(
-                            np.array([elements[atomType.split(".")[0]], partialCharge, x, y, z, prob]))
-                    else:
-                        finalCoordinates[pdbID][ResidAndResnum].append(
-                            np.array([elements[atomType.split(".")[0]], partialCharge, x, y, z, prob]))
+                    try:
+                        x, y, z, atomType, partialCharge, ResidAndResnum = line.split()[2], line.split()[3], line.split()[4], line.split()[5], line.split()[8], line.split()[7]
+                        x, y, z, partialCharge = map(float, [x, y, z, partialCharge])
+                        prob = float(tempPesto[pdbID].get(ResidAndResnum, 0))
+                        if ResidAndResnum not in finalCoordinates[pdbID]:
+                            finalCoordinates[pdbID][ResidAndResnum] = []
+                            finalCoordinates[pdbID][ResidAndResnum].append(
+                                np.array([elements[atomType.split(".")[0]], partialCharge, x, y, z, prob]))
+                        else:
+                            finalCoordinates[pdbID][ResidAndResnum].append(
+                                np.array([elements[atomType.split(".")[0]], partialCharge, x, y, z, prob]))
+                    except IndexError:
+                        print(pdbID, "HAD AN INDEX OUT OF RANGE IN THE MOL2 FILE.")
+
         dataList = []
         for pair in couples:
             res1, res2, = pair.split("-")[0], pair.split("-")[1]
             dec1, dec2 = dec_res_.get(res1, 0), dec_res_.get(res2, 0)
-            combDecomp = float(dec1 + dec2)
+            combDecomp = float(float(dec1) + float(dec2))
             arr1, arr2 = np.array(finalCoordinates[pdbID][res1]), np.array(finalCoordinates[pdbID][res2])
             arrayList = [arr1, arr2]
-
             max_len = max([arr.shape[0] for arr in arrayList])
             # we pad before stacking
             if arr1.shape[0] < arr2.shape[0]:
@@ -136,11 +142,15 @@ class FeaturizerClass:
             zero_count = np.sum(a4 == 0, axis=1)
             filtered_arr = a4[zero_count < 6]
             dataList.append(filtered_arr)
-        dataMatrix = np.vstack(np.array(dataList))
+        dataMatrix = np.vstack(dataList)
+        makedirs('saved_results', exist_ok=True)
         with open('../../summary', 'a') as summaryLog:
             summaryLog.write(f"\nTotal number of pair contacts in pdb {pdbID} = {dataMatrix.shape}")
-        with open('./saved_results/protein_data.npy', 'wb') as f:
-            np.save(f, dataMatrix, allow_pickle=True)
+        if os.path.exists('./saved_results/protein_data.npy'):
+            with open('./saved_results/protein_data.npy', 'wb') as f:
+                np.save(f, dataMatrix, allow_pickle=True)
+        else:
+            np.save("./saved_results/protein_data.npy", dataMatrix, allow_pickle=True)
 
     def ParallelFeaturize(self) -> None:
         cpuUnits = int(cpu_count() // 4)

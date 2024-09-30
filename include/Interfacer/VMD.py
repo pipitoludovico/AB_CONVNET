@@ -28,19 +28,3 @@ def GetVDWcontacts(abChains, agChains):
         for line in tcl_script_lines:
             vmdContactsFile.write(line + "\n")
     run(f'vmd -dispdev text -e getContacts.tcl > logs/getContacts.log', shell=True, check=True, stdout=DEVNULL)
-
-# def GetCloseSelection(FailedSander: bool):
-#     os.makedirs('minimal_interface', exist_ok=True)
-#     pdbFile = 'complex_minimized_chains.pdb' if not FailedSander else 'protein_H.pdb'
-#
-#     selectVMD = ("package require psfgen", "resetpsf",
-#                  f"mol load pdb {pdbFile}",
-#                  f'set sel [atomselect top "all"]',
-#                  # f'set sel [atomselect top "(not chain {" ".join(abChain).replace("|", " ")} and same residue as protein within 10 of chain {" ".join(abChain).replace("|", " ")}) or'
-#                  # f' (not chain {str(agChain).replace("|", " ")} and same residue as protein within 10 of chain {str(agChain).replace("|", " ")})"]',
-#                  "$sel writepdb minimal_interface/selection.pdb", "quit")
-#
-#     with open('writeSel.tcl', 'w') as writer:
-#         for line in selectVMD:
-#             writer.write(line + "\n")
-#     run('vmd -dispdev text -e writeSel.tcl > logs/writeSel.log 2>&1', shell=True, stdout=DEVNULL)
