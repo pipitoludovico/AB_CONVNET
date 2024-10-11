@@ -113,10 +113,12 @@ class FeaturizerClass:
                         if ResidAndResnum not in finalCoordinates[pdbID]:
                             finalCoordinates[pdbID][ResidAndResnum] = []
                             finalCoordinates[pdbID][ResidAndResnum].append(
-                                np.array([elements[atomType.split(".")[0]], partialCharge, x, y, z, prob]))
+                                # np.array([elements[atomType.split(".")[0]], partialCharge, x, y, z, prob]))
+                                np.array([elements[atomType.split(".")[0]], partialCharge, x, y, z]))
                         else:
                             finalCoordinates[pdbID][ResidAndResnum].append(
-                                np.array([elements[atomType.split(".")[0]], partialCharge, x, y, z, prob]))
+                                np.array([elements[atomType.split(".")[0]], partialCharge, x, y, z]))
+                                # np.array([elements[atomType.split(".")[0]], partialCharge, x, y, z, prob]))
                     except IndexError:
                         print(pdbID, "HAD AN INDEX OUT OF RANGE IN THE MOL2 FILE.")
 
@@ -138,7 +140,8 @@ class FeaturizerClass:
             a3 = np.hstack((paddedarr1, paddedarr2))
             combDecomp_array = np.full((a3.shape[0], 1), combDecomp)
             GBSA_array = np.full((a3.shape[0], 1), GBSA)
-            a4 = np.hstack((a3, combDecomp_array, GBSA_array))
+            a4 = np.hstack((a3, GBSA_array))
+            # a4 = np.hstack((a3, combDecomp_array, GBSA_array))
             zero_count = np.sum(a4 == 0, axis=1)
             filtered_arr = a4[zero_count < 6]
             dataList.append(filtered_arr)
@@ -146,11 +149,11 @@ class FeaturizerClass:
         makedirs('saved_results', exist_ok=True)
         with open('../../summary', 'a') as summaryLog:
             summaryLog.write(f"\nTotal number of pair contacts in pdb {pdbID} = {dataMatrix.shape}")
-        if os.path.exists('./saved_results/protein_data.npy'):
-            with open('./saved_results/protein_data.npy', 'wb') as f:
+        if os.path.exists('./saved_results/protein_data_noDEC.npy'):
+            with open('./saved_results/protein_data_noDEC.npy', 'wb') as f:
                 np.save(f, dataMatrix, allow_pickle=True)
         else:
-            np.save("./saved_results/protein_data.npy", dataMatrix, allow_pickle=True)
+            np.save("./saved_results/protein_data_noDEC.npy", dataMatrix, allow_pickle=True)
 
     def ParallelFeaturize(self) -> None:
         cpuUnits = int(cpu_count() // 4)

@@ -12,8 +12,8 @@ def FormatData():
         if not path.exists("matrices"):
             makedirs('matrices', exist_ok=True)
         for pdbFolder in listdir("selected"):
-            if os.path.exists("selected/" + pdbFolder + "/saved_results/" + "protein_data.npy"):
-                sample = np.load(("selected/" + pdbFolder + "/saved_results/" + "protein_data.npy"), allow_pickle=True)
+            if os.path.exists("selected/" + pdbFolder + "/saved_results/" + "protein_data_noDEC.npy"):
+                sample = np.load(("selected/" + pdbFolder + "/saved_results/" + "protein_data_noDEC.npy"), allow_pickle=True)
                 samples.append(sample)
 
     def PadData():

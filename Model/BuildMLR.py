@@ -58,7 +58,8 @@ def TrainModel(args_):
 
     history = model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, validation_data=(X_test, y_test),
                         callbacks=[checkpoint])
-
+    with open(f'scaling_factor', 'w') as maxFor:
+        maxFor.write(max_for_scaling)
     plt.plot(history.history['loss'], label='Training Loss')
     plt.plot(history.history['val_loss'], label='Validation Loss')
     plt.title('Loss and Validation Loss Over Epochs')

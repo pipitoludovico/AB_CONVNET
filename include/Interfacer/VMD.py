@@ -1,8 +1,9 @@
 from subprocess import run, DEVNULL
 
 
-def GetVDWcontacts(abChains, agChains):
-    tcl_script_lines = ['mol load pdb complex_minimized_chains.pdb', '', 'proc contactFreq {sel1 sel2 outFile mol} {',
+def GetVDWcontacts(filePath="complex_minimized_chains.pdb", abChains="H L", agChains="not H L",
+                   outputPath="contacts.int"):
+    tcl_script_lines = [f'mol load pdb {filePath}', '', 'proc contactFreq {sel1 sel2 outFile mol} {',
                         '  set allCounts {}', '  set numberOfFrames [molinfo $mol get numframes]',
                         '', '  if { $outFile != "stdout" } {', '     set outFile [open $outFile w]',
                         '  }', '', '  for {set i 0} {$i < $numberOfFrames} {incr i} {', '    molinfo $mol set frame $i',
@@ -21,7 +22,7 @@ def GetVDWcontacts(abChains, agChains):
                         '    $frameCount1 delete', '    $frameCount2 delete', '  }', '',
                         '  if { $outFile != "stdout" } {', '    close $outFile', '  }', '}', '',
                         f'set sel1 "chain {" ".join(abChains).replace("|", " ")}"',
-                        f'set sel2 "chain {str(agChains).replace("|", " ")}"', 'set outName "contacts.int"',
+                        f'set sel2 "chain {str(agChains).replace("|", " ")}"', f'set outName {outputPath}',
                         '', '', 'puts "GETTING CONTACTS"', 'contactFreq $sel1 $sel2 $outName top', '', 'exit']
 
     with open('getContacts.tcl', 'w') as vmdContactsFile:

@@ -2,6 +2,8 @@ import warnings
 import argparse
 from os import path, getpid
 
+from torch.optim.optimizer import required
+
 warnings.filterwarnings(action='ignore')
 
 
@@ -10,6 +12,13 @@ def dir_path(string):
         return string
     else:
         raise NotADirectoryError(string)
+
+
+def check_existence(string):
+    if path.exists(string):
+        return string
+    else:
+        raise FileNotFoundError(string)
 
 
 def file_path(string):
@@ -26,8 +35,11 @@ def ParseCLI():
     ap.add_argument('-csv', type=file_path)
     ap.add_argument('-database', type=dir_path)
     ap.add_argument('-train', required=False, action='store_true', help="Train the model with the saved database.")
-    ap.add_argument('-lr', required=False, type=float, default=1e-4, help="sets the learning rate for Adam optimized [default = 1e-5]")
-    ap.add_argument('-l2', required=False, type=float, default=1e-2, help="sets the learning rate for bias regulizer [default = 1e-2]")
+    ap.add_argument('-test', required=False, type=check_existence, help="Test the model with the saved database.")
+    ap.add_argument('-lr', required=False, type=float, default=1e-4,
+                    help="sets the learning rate for Adam optimized [default = 1e-5]")
+    ap.add_argument('-l2', required=False, type=float, default=1e-2,
+                    help="sets the learning rate for bias regulizer [default = 1e-2]")
     ap.add_argument('-batch', required=False, type=int, default=32, help="sets the batch size [default = 32]")
     ap.add_argument('-epoch', required=False, type=int, default=50, help="sets the number of epochs [default = 50]")
     ap.add_argument('-split', required=False, type=int, default=80, help="sets the batch size [default = 32]")

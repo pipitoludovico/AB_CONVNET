@@ -4,7 +4,8 @@ from include.Featurizer.FeatureMaker import FeaturizerClass
 from include.Interfacer.PeStO import ParallelPesto
 from Model.MatrixFormatter import *
 from Model.BuildMLR import *
-
+from Model.FeatureExtractor import *
+from Model.TestModel import *
 from warnings import filterwarnings
 from include.CLIparser.CLIparser import ParseCLI
 
@@ -30,6 +31,10 @@ def main():
     if args['train']:
         FormatData()
         TrainModel(args)
+    if args['test']:
+        path_ = args['test']
+        matrixData_ = GetFeatures(path_)
+        Test(matrixData_)
 
 
 if __name__ == '__main__':
