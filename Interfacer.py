@@ -30,9 +30,9 @@ def main():
     if args['train']:
         FormatData()
         TrainModel(args)
-    if args['samplesToFeed']:
-        path_ = args['samplesToFeed']
-        featurizedSamples = GetFeatures(path_)
+    if args['samplesToTest']:
+        path_ = args['samplesToTest']
+        GetFeatures(path_)
     if args['test']:
         Test()
 
