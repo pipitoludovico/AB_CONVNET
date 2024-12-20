@@ -30,6 +30,7 @@ class DatabaseManager:
                     row.antigen_chain = str(row.antigen_chain).replace("|", " ").upper()
                     self.complex_data[row.pdb] = [row.Hchain, row.Lchain, row.antigen_chain, row.antigen_type]
                 if copy_:
+                    print("copying the pdb")
                     self.processes.append(p.apply_async(MoveToSelected, args=(chunk, self.dbFolder)))
             for _ in self.processes:
                 _.get()
