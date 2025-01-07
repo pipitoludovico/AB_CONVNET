@@ -50,6 +50,7 @@ def GetChains(path_):
 
 
 def BuildMatrix(idx: int, path_: str) -> np.array:
+    numberOfPairs: int = 50
     _HCHAIN, _LCHAIN, _AGCHAIN = "H", "L", "A"
     try:
         _HCHAIN, _LCHAIN, _AGCHAIN = GetChains(path_)
@@ -70,8 +71,17 @@ def BuildMatrix(idx: int, path_: str) -> np.array:
                 'Lu': 174.967, 'Hf': 178.49, 'Ta': 180.948, 'W': 183.84, 'Re': 186.207, 'Os': 190.23, 'Ir': 192.217,
                 'Pt': 195.084, 'Au': 196.967, 'Hg': 200.59, 'Tl': 204.383, 'Pb': 207.2, 'Bi': 208.980,
                 'Th': 232.038, 'Pa': 231.036, 'U': 238.029}
-    amino_acids = ["DAMP", "ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY", "HIS", "ILE",
-                   "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP", "TYR", "VAL", 'CYX', "HIE"]
+    amino_acids = np.array(
+        ["DAMP", "ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY", "HIS", "ILE", "LEU", "LYS", "MET", "PHE",
+         "PRO", "SER", "THR", "TRP", "TYR", "VAL", 'CYX', "HIE"])
+
+    def one_hot(array):
+        unique, inverse = np.unique(array, return_inverse=True)
+        onehot = np.eye(unique.shape[0])[inverse]
+        return onehot
+
+    amino_one_hot = one_hot(amino_acids)
+
     finalCoordinates = {}
     couples = []
     fileName = path_.split("/")[-1]
@@ -122,18 +132,21 @@ def BuildMatrix(idx: int, path_: str) -> np.array:
                             print(idx, "HAD AN INDEX OUT OF RANGE IN THE MOL2 FILE.")
 
         dataList = []
-        for pair in couples[:100]:
+        for pair in couples[:numberOfPairs]:
             res1, res2, = pair.split("-")[0], pair.split("-")[1]
             # dec1, dec2 = dec_res_.get(res1, 0), dec_res_.get(res2, 0)
-            arr1 = np.hstack(finalCoordinates[idx][res1] + [amino_acids.index(res1[0:3])])
-            arr2 = np.hstack(finalCoordinates[idx][res2] + [amino_acids.index(res2[0:3])])
+            index1 = np.where(amino_acids == res1[0:3])
+            index2 = np.where(amino_acids == res2[0:3])
+            arr1 = np.hstack(finalCoordinates[idx][res1] + [amino_one_hot[index1][0]])
+            arr2 = np.hstack(finalCoordinates[idx][res2] + [amino_one_hot[index2][0]]) # size 1, 48
             # we pad before stacking
-            target_length = 26
+            target_length = 48
             padded_arr1 = np.pad(arr1, (0, target_length - arr1.size), 'constant')
             padded_arr2 = np.pad(arr2, (0, target_length - arr2.size), 'constant')
             a3 = np.hstack((padded_arr1, padded_arr2))
             dataList.append(a3)
-        dataMatrix = np.hstack(dataList)
+        dataMatrix = np.hstack(dataList)  # we miss GBSA as that's our label
+        print(f"SHAPE OF {dataMatrix.shape} for {path_}")
         finalCoordinates.clear()
         # stacked = np.vstack(dataList)
         np.save(f"{resultFilePath}/{fileName}.npy", dataMatrix, allow_pickle=True)

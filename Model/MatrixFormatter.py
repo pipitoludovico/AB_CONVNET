@@ -1,33 +1,52 @@
-import os.path
-from os import listdir, makedirs, path, getcwd, chdir
+import os
 import numpy as np
-
-samples = []
+import pandas as pd
 
 
 def FormatData():
+    samples = []
+
     def LoadData():
-        cwd = getcwd()
-        chdir(cwd)
-        if not path.exists("matrices"):
-            makedirs('matrices', exist_ok=True)
-        for pdbFolder in listdir("selected"):
-            if os.path.exists("selected/" + pdbFolder + "/saved_results/" + "protein_data_noDEC.npy"):
-                sample = np.load(("selected/" + pdbFolder + "/saved_results/" + "protein_data_noDEC.npy"), allow_pickle=True)
-                if sample.shape[0] == 5201:
-                    samples.append(sample)
+        cwd = os.getcwd()
+        os.chdir(cwd)
+        numberOfPairs: int = 50
 
-    # def PadData():
-    #     max_len = max([arr.shape[0] for arr in samples])
-    #     print("Max length:", max_len)
-    #     padded = [np.pad(arr, ((0, max_len - arr.shape[0]), (0, 0)), 'constant', constant_values=0) if arr.shape[0] < max_len else arr for arr in samples]
-    #     for x, y in zip(padded, samples):
-    #         assert x.shape[0] == max_len, f"Padding failed: {x.shape[0]} != {max_len}"
-    #     return padded
+        if not os.path.exists("matrices"):
+            os.makedirs('matrices', exist_ok=True)
+        for pdbFolder in os.listdir("selected"):
+            file_path = os.path.join("selected", pdbFolder, "saved_results", "protein_data_noDEC.npy")
+            if os.path.exists(file_path):
+                try:
+                    sample = np.load(file_path, allow_pickle=True)
+                    if sample.shape[0] == ((numberOfPairs * 60) + 1):  # Verify sample size
+                        samples.append(sample)
+                except Exception as e:
+                    print(f"Error loading {pdbFolder}: {e}")
+        print(f"Loaded {len(samples)} valid samples.")
 
-    def SavePadded():
-        # padded = PadData()
-        np.save('matrices/padded.npy', np.vstack(samples), allow_pickle=True)
+    def remove_outliers_by_label(samples_, lower_percentile=15, upper_percentile=85):
+        labels = [sample[-1] for sample in samples_]  # Estraggo le label (ultima colonna di ogni sample)
+        labels_array = np.array(labels)
+        # calcolo i percentili
+        lower_bound = np.percentile(labels_array, lower_percentile)
+        upper_bound = np.percentile(labels_array, upper_percentile)
+        print(f"Filtering labels using percentiles: Values outside [{lower_bound:.2f}, {upper_bound:.2f}]")
+        # Filtra i sample basandoti sui limiti delle GBSA
+        filtered = [sample for sample in samples if lower_bound <= sample[-1] <= upper_bound]
+
+        print(f"Filtered dataset size: {len(filtered)} (removed {len(samples_) - len(filtered)} samples)")
+        return filtered
+
+    def SavePadded(filtered_samples_):
+        print("\nDataset description before saving:\n")
+        df = pd.DataFrame(filtered_samples_)
+        print(df.describe())
+        np.save('matrices/padded.npy', filtered_samples_, allow_pickle=True)
+        print("Dataset saved to 'matrices/padded.npy'")
 
     LoadData()
-    SavePadded()
+    samples_array = np.array(samples, dtype=float)
+
+    # Rimuovi outlier basati sulle label
+    filtered_samples = remove_outliers_by_label(samples_array, lower_percentile=0, upper_percentile=100)
+    SavePadded(filtered_samples)
