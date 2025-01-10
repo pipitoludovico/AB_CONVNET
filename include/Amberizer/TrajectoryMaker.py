@@ -8,7 +8,7 @@ from include.Interfacer.VMD import GetVDWcontacts
 
 
 def RunMMPBSA() -> None:
-    run(f"/home/scratch/software/amber20/bin/MMPBSA.py -i mmgbsa.in -o results_mmgbsa.dat -cp gbsa/complex.prmtop -rp gbsa/receptor.prmtop -lp gbsa/ligand.prmtop -y complex_minimized_chains.pdb -eo gbsa.csv > logs/GBSA.log 2>&1",
+    run(f"MMPBSA.py -i mmgbsa.in -o results_mmgbsa.dat -cp gbsa/complex.prmtop -rp gbsa/receptor.prmtop -lp gbsa/ligand.prmtop -y complex_minimized_chains.pdb -eo gbsa.csv > logs/GBSA.log 2>&1",
         shell=True, stdout=DEVNULL, stderr=DEVNULL)
     if not os.path.exists('results_mmgbsa.dat'):
         run(f"touch GBSA_FAILED", shell=True)
