@@ -8,7 +8,7 @@ from include.Interfacer.VMD import GetVDWcontacts
 
 
 def RunMMPBSA() -> None:
-    run(f"/home/scratch/software/amber20/bin/MMPBSA.py -i mmgbsa.in -o results_mmgbsa.dat -cp gbsa/complex.prmtop -rp gbsa/receptor.prmtop -lp gbsa/ligand.prmtop -y complex_minimized_chains.pdb -eo gbsa.csv > logs/GBSA.log 2>&1",
+    run(f"MMPBSA.py -i mmgbsa.in -o results_mmgbsa.dat -cp gbsa/complex.prmtop -rp gbsa/receptor.prmtop -lp gbsa/ligand.prmtop -y complex_minimized_chains.pdb -eo gbsa.csv > logs/GBSA.log 2>&1",
         shell=True, stdout=DEVNULL, stderr=DEVNULL)
     if not os.path.exists('results_mmgbsa.dat'):
         run(f"touch GBSA_FAILED", shell=True)
@@ -31,6 +31,7 @@ def GetChains(pdb_):
                     shell=True)  # temp has no chain info
                 chainIDs_ = RestoreChains(pdb_)
                 return chainIDs_
+    return None
 
 
 class TrajectoryMaker:
@@ -46,7 +47,7 @@ class TrajectoryMaker:
                 if not os.path.exists(f"{pdb}_pdb4amber.pdb"):
                     run(f"pdb4amber -i {pdb}.pdb -o {pdb}_pdb4amber.pdb -y -d -a -p >> logs/initial_pdb4amber.log 2>&1;rm {pdb}_pdb4amber_*;",
                         shell=True)  # cleaning the structure
-                if not os.path.exists('gbsa/') and not os.path.exists('initial/'):
+                if not os.path.exists('gbsa/') or not os.path.exists('initial/'):
                     SplitAndTleap(pdb=pdb + "_pdb4amber.pdb", chains=chains_)
                 if not os.path.exists('complex_minimized.pdb'):
                     TrajectorizePDB()  # this makes complex_minimized_chains.pdb

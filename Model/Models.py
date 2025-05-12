@@ -1,28 +1,27 @@
-from keras.layers import Input, Dense, Flatten, MaxPooling1D, Reshape, Conv1D
-from keras.models import Model
+from keras import layers, Model, Input
 
 
-def Net():
-    inputs = Input(shape=(None, 1))  # None consente input con timesteps variabili
-    x = Reshape((50, 60))(inputs)  # Reshape to (50 res pairs, 60 features)
+def Net(ab_shape=(92, 5, 34), ag_shape=(97, 5, 34)):
+    ab_input = Input(shape=ab_shape, name="ab_input")  # (residues, atoms, features)
+    ag_input = Input(shape=ag_shape, name="ag_input")
+    gbsa_input = Input(shape=(1,), name="gbsa_input")
 
-    x = Conv1D(filters=128, kernel_size=3, strides=3, activation='relu', padding='same')(x)
-    x = MaxPooling1D(pool_size=2, padding='same')(x)
+    def encode_seq(seq_input):
+        # Add a channel dimension so shape becomes (residues, atoms, features, 1)
+        x = layers.Reshape((seq_input.shape[1], seq_input.shape[2], seq_input.shape[3], 1))(seq_input)
+        x = layers.TimeDistributed(layers.Conv2D(32, (3, 3), padding='same', activation='relu'))(x)
+        x = layers.TimeDistributed(layers.Flatten())(x)
+        x = layers.GRU(128)(x)
+        return x
 
-    x = Conv1D(filters=256, kernel_size=6, strides=6, activation='relu', padding='same')(x)
-    x = MaxPooling1D(pool_size=2, padding='same')(x)
+    x_ab = encode_seq(ab_input)
+    x_ag = encode_seq(ag_input)
 
-    x = Conv1D(filters=256, kernel_size=12, strides=12, activation='relu', padding='same')(x)
-    x = MaxPooling1D(pool_size=2, padding='same')(x)
+    x = layers.Concatenate()([x_ab, x_ag, gbsa_input])
+    x = layers.Dense(128, activation='relu')(x)
 
-    x = Conv1D(filters=512, kernel_size=24, strides=24, activation='relu', padding='same')(x)
-    x = MaxPooling1D(pool_size=2, padding='same')(x)
+    # Two heads: real/fake classification and GBSA regression
+    validity = layers.Dense(1, activation='sigmoid', name='validity')(x)
+    gbsa_pred = layers.Dense(1, activation='linear', name='gbsa_pred')(x)
 
-    x = Flatten()(x)
-    x = Dense(1024, activation='relu')(x)
-    x = Dense(512, activation='relu')(x)
-    x = Dense(256, activation='relu')(x)
-    outputs = Dense(1, activation='linear')(x)
-
-    model = Model(inputs=inputs, outputs=outputs)
-    return model
+    return Model(inputs=[ab_input, ag_input, gbsa_input], outputs=[validity, gbsa_pred], name="Discriminator")

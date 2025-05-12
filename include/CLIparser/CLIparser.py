@@ -44,6 +44,8 @@ def ParseCLI():
     ap.add_argument('-epoch', required=False, type=int, default=50, help="sets the number of epochs [default = 50]")
     ap.add_argument('-split', required=False, type=int, default=80, help="sets % split between test and train [default = 80]")
 
+    ap.add_argument('-gan', required=False, action='store_true', help="Tries to train the GAN")
+
     ap.add_argument('-format', required=False, action='store_true', help="format data and removes quartiles 15-85")
     ap.add_argument('-model', required=False, type=str, help="specify the file path with the keras model")
     ap.add_argument('-name', required=False, type=str, default='default', help="names the model's file name")

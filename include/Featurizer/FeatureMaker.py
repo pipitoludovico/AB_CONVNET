@@ -1,190 +1,209 @@
 import os.path
-from os import cpu_count, chdir, makedirs
+from os import cpu_count
 from multiprocessing import Pool
 from subprocess import run
 import numpy as np
+import MDAnalysis as Mda
 import logging
+from collections import defaultdict
+from scipy.spatial.transform import Rotation
+import gc
 
 
 class FeaturizerClass:
     def __init__(self, dbDict: dict, root: str):
-        self.dbDict = dbDict
+        self.dbDict = dbDict  # dict[pdb] = [row.Hchain, row.Lchain, row.antigen_chain, row.antigen_type]
         self.root = root
-        self.datFile = "FINAL_DECOMP_MMPBSA.dat"
+        self.GBSA = 0
 
-    def Featurize(self, pdbID: str) -> None:
-        if not os.path.exists("selected/" + pdbID + "/" + self.datFile):
-            chdir(self.root)
-            return
-        try:
-            chdir("selected/" + pdbID)
-            dec_res = self.GetDecomp()
-            self.BuildMatrix(pdbID, dec_res)
-        except Exception as e:
-            logging.error(f"Error processing {pdbID}: {e}")
-        finally:
-            chdir(self.root)
-
-    def GetDecomp(self) -> (list, list):
-        dec_results = {}
-
-        def WriteTotalFromDecomp():
-            decomp_purged = open("total_purged.csv", 'w')
-            with open(f'{self.datFile}', 'r') as f:
-                for purgedLine in f.readlines():
-                    decomp_purged.writelines(purgedLine)
-                    if purgedLine == "\n" or purgedLine == " ":
-                        break
-
-        def GetResults():
-            with open('total_purged.csv', 'r') as f:
-                after_header = f.readlines()[7:]
-                for lines in after_header:
-                    if lines == "" or lines == " " or lines == "\n":
-                        continue
-                    if len(lines.split()) > 3:
-                        if lines.split()[1].split(',')[1] == "R" or lines.split()[1].split(',')[1] == 'L':
-                            resname = lines[0:4].strip()
-                            resnum = lines[4:7].strip()
-                            total_energy = float(lines.split(",")[-3])
-                            if (resname + resnum) not in dec_results:
-                                dec_results[resname + resnum] = total_energy
-
-        WriteTotalFromDecomp()
-        GetResults()
-        return dec_results
-
-    @staticmethod
-    def BuildMatrix(pdbID: str, dec_res_: dict) -> np.array:
-        numberOfpairsToChoose: int = 50
-
-        # elements = {'H': 1.008, 'C': 12.011, 'N': 14.007, 'O': 15.999, 'S': 32.066}
-        eleTypes = ['N.3', "N.am", "N.4", 'C.3', 'C.2', 'O.2', 'O.3', 'O.co2']
-        amino_acids = ["ALA", "ARG", "ASN", "ASP", "CYS", "CYX", "GLN", "GLU", "GLY", "HIS", "HIE", "ILE", "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP", "TYR", "VAL"]
-
-        # def one_hot(array):
-        #     unique, inverse = np.unique(array, return_inverse=True)
-        #     onehot = np.eye(unique.shape[0])[inverse]
-        #     return onehot
-
-        finalCoordinates = {}
-        tempPesto = {}
-        GBSA: float = 0
-
-        # we get the total GBSA
-        with open('results_mmgbsa.dat', 'r') as GBSAfile:
+    def GetGBSA(self, selected_path):
+        gbsa = 0
+        with open(f'{selected_path}/results_mmgbsa.dat', 'r') as GBSAfile:
             for line in GBSAfile.readlines():
                 if "DELTA TOTAL" in line:
-                    GBSA = float(line.split()[2])
-                    break
-        if GBSA < 0:
-            # we convert the complex to get the information we need
-            if not os.path.exists('complex_minimized.mol2'):
-                run("obabel -i pdb complex_minimized_chains.pdb -o mol2 -O complex_minimized.mol2 > logs/obabelLog.log",
-                    shell=True)
-            couples = []
-            # we check contact points between Ab and Ag and make the pairs
-            with open('contacts.int', 'r') as contacts:
-                contact_content = contacts.read()
-                results = contact_content.replace("\n", '').split(',')[1:]
-                numContacts = int(contact_content.split(",")[0])
-                for couple in results:
-                    couples.append(couple)
-            # and we add, if any, the % of molecular surface patch % to the score. This is where we build the final matrix.
-            if numContacts < numberOfpairsToChoose:
-                print("Not enough contacts for ", pdbID, "Total contacts were: ", numContacts)
-            else:
-                with open('complex_minimized.mol2', 'r') as complexMOL2, open('patches/selection_i0.pdb') as PestoFile:
-                    finalCoordinates[pdbID] = {}
-                    tempPesto[pdbID] = {}
-                    pestoPDB = PestoFile.readlines()
-                    for line in pestoPDB:
-                        if len(line.split()) > 5:
-                            residueID = line.split()[3] + line[23:27].strip()
-                            interfaceProb = line[56:62].strip()
-                            tempPesto[pdbID][str(residueID)] = interfaceProb
+                    gbsa = float(line.split()[2])
+        self.GBSA = gbsa
 
-                    for line in complexMOL2.readlines():
-                        if len(line.split()) > 5:
-                            if line.split()[1] in ['N', 'CA', 'CB', 'C', 'O']:
-                                try:
-                                    x, y, z, atomType, partialCharge, Resid, Resnum = line.split()[2], line.split()[3], line.split()[4], line.split()[5], line.split()[8], line.split()[7][0:3], line.split()[7][3:]
-                                    x, y, z, partialCharge = map(float, [x, y, z, partialCharge])
-                                    # prob = float(tempPesto[pdbID].get(ResidAndResnum, 0))
-                                    ResidAndResnum = f"{Resid}{Resnum}"
-                                    # atomMass = elements.get(f"{atomType.split('.')[0]}", 1.0)
-                                    if ResidAndResnum not in finalCoordinates[pdbID]:
-                                        finalCoordinates[pdbID][ResidAndResnum] = []
-                                        finalCoordinates[pdbID][ResidAndResnum].append(np.array([x, y, z, eleTypes.index(atomType), partialCharge, amino_acids.index(Resid)]))
-                                    else:
-                                        finalCoordinates[pdbID][ResidAndResnum].append(np.array([x, y, z, eleTypes.index(atomType), partialCharge, amino_acids.index(Resid)]))
-                                except IndexError:
-                                    print(pdbID, "HAD AN INDEX OUT OF RANGE IN THE MOL2 FILE.")
-                residuePairs = []
-                bestDecomps = []
-                for index, pair in enumerate(couples):
-                    res1, res2, = pair.split("-")[0], pair.split("-")[1]
-                    dec1, dec2 = dec_res_.get(res1, 0), dec_res_.get(res2, 0)
-                    combDecomp = float(float(dec1) + float(dec2))
-                    bestDecomps.append((index, combDecomp, (res1, res2)))
-                best100pairs = sorted(bestDecomps, key=lambda _x: _x[1], reverse=False)[:numberOfpairsToChoose]
-                # now we build the stacked arrays
-                for best in best100pairs:
-                    res1, res2 = best[2][0], best[2][1]
-                    # dec1, dec2 = dec_res_.get(res1, 0), dec_res_.get(res2, 0)
-                    # 5 atomi per residuo
-                    # features = x + y + z + type + charge + AA => 6 features
-                    # messi allineati tipo:
-                    # CYS 1 = (carbonio = 1, 12, +1, 0, 0 ,0), (azoto = 2, 14, +2, 1,1,1) ... per 5 atomi.
-                    # quindi la CYS 1 avrà 6*5 30 features
-                    # ora facciamo le coppie tipo CYS-THR => 30 + 30 features
-                    res1array = np.array(finalCoordinates[pdbID][res1])
-                    res2array = np.array(finalCoordinates[pdbID][res2])
-                    res1Pad = np.pad(res1array, pad_width=((0, 5 - res1array.shape[0]), (0, 0)), mode='constant', constant_values=0)
-                    res2Pad = np.pad(res2array, pad_width=((0, 5 - res2array.shape[0]), (0, 0)), mode='constant', constant_values=0)
-                    stackedCouple = np.hstack([res1Pad, res2Pad])
-                    reshaped = stackedCouple.reshape(-1)  # shape 60,1 => 5 atomi * 6 features = 30 a residuo. Ogni coppia ha 2 residui quindi la shape è 60, 1
-                    residuePairs.append(reshaped)
-                # ora devo appiattire ed aggiungere la label quindi ogni pdb avrà 600 features + 1.
-                flat = np.array(residuePairs).reshape(-1)
-                dataMatrix = np.hstack([flat, [GBSA]])
-                if dataMatrix.shape[0] != ((numberOfpairsToChoose * 60) + 1):
-                    print("FINAL SHAPE NOT CORRESPONDING: ", dataMatrix.shape, pdbID)
-                del finalCoordinates
-                makedirs('saved_results', exist_ok=True)
-                with open('../../summary', 'a') as summaryLog:
-                    summaryLog.write(f"\nTotal number of pair contacts in pdb {pdbID} = {dataMatrix.shape}")
-                if os.path.exists('./saved_results/protein_data_noDEC.npy'):
-                    with open('./saved_results/protein_data_noDEC.npy', 'wb') as f:
-                        np.save(f, dataMatrix, allow_pickle=True)
-                    print("Contact pair matrix overwritten for ", pdbID)
-                else:
-                    np.save("./saved_results/protein_data_noDEC.npy", dataMatrix, allow_pickle=True)
-                    print("Contact pair matrix updated for ", pdbID)
-                del dataMatrix
+    def Featurize(self, pdbID: str, chains_and_type: list) -> None:
+        pdbID = pdbID.strip().lower()
+        selected_path = os.path.join(self.root, "selected", pdbID)
+        if not os.path.exists(selected_path) or any(info == "" or info is None for info in chains_and_type):
+            return
+        else:
+            hChain, lChain, agChain = chains_and_type[0], chains_and_type[1], chains_and_type[2]
+            print(f"\nWorking in {selected_path} {hChain} {lChain} {agChain}")
+            try:
+                print(f"before running write interface for {pdbID}")
+                self.WriteInterface(selected_path, hChain, lChain,
+                                    agChain)  # scrivo l'interfaccia, e poi anche rec e lig
+                print(f"Inferface written in {selected_path}")
+                self.GetGBSA(selected_path)  # creo la label...
+                print(f"GBSA for {selected_path}: {self.GBSA}")
+            except Exception as e:
+                print(repr(e))
+                gc.collect()
+            if self.GBSA < 0:
+                self.BuildMatrix(pdbID, selected_path)  # , dec_res)
 
-    def ParallelFeaturize(self) -> None:
-        cpuUnits = int(cpu_count() // 4)
-        with Pool(processes=cpuUnits) as p:
-            for pdbID, chains in self.dbDict.items():
-                p.apply_async(self.Featurize, args=(pdbID,))
-            p.close()
-            p.join()
-        logging.debug("All processes have completed.")
+    @staticmethod
+    def WriteInterface(selected_path, hChain_, lChain_, agChain_) -> None:
+        """
+        Creates rec.mol2, lig.mol2 and interface.pdb.
+        """
+        u = Mda.Universe(f'{selected_path}/complex_minimized_chains.pdb')
+
+        try:
+            # ab = u.select_atoms(f"chainID {hChain_} {lChain_}")
+            # ag = u.select_atoms(f"chainID {agChain_}")
+            # ab.write(f"{selected_path}/rec.pdb")
+            # ag.write(f"{selected_path}/lig.pdb")
+
+            ag_neighbors = u.select_atoms(f"same residue as (protein and around 5 chainID {agChain_})")
+            hl_neighbors = u.select_atoms(
+                f"same residue as (protein and around 5 (chainID {hChain_} or chainID {lChain_}))")
+            ag_neighbors.write(f'{selected_path}/rec.pdb')
+            hl_neighbors.write(f'{selected_path}/lig.pdb')
+            interface = ag_neighbors + hl_neighbors
+            interface.write(f'{selected_path}/interface.pdb')
+
+        finally:
+            del u
+            gc.collect()  # Force garbage collection to close file handles
+
+        for structure in ["rec.pdb", "lig.pdb", "interface.pdb"]:
+            print(f"Doing {structure} in {selected_path}")
+            mol2_filename = structure.replace('pdb', 'mol2')
+            mol2_path = f"{selected_path}/{mol2_filename}"
+            if not os.path.exists(mol2_path):
+                run(f"obabel -i pdb {selected_path}/{structure} -o mol2 -O {mol2_path} --partialcharge eem -xs", shell=True)
+
+    def BuildMatrix(self, pdbID: str, selected_path: str) -> np.array:
+        eleTypes = ['N.3', "N.am", "N.4", 'C.3', 'C.2', 'O.2', 'O.3', 'O.co2']
+        amino_acids = ["ALA", "ARG", "ASN", "ASP", "CYS", "CYX", "GLN", "GLU", "GLY", "HIS", "HIE",
+                       "ILE", "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP", "TYR", "VAL"]
+        accepted_atoms = ['N', 'CA', 'CB', 'C', 'O']
+
+        def build_residue_map(filename: str) -> dict:
+            """Create a residue map for a given file"""
+            residue_map = defaultdict(list)
+            with open(filename, 'r') as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) < 9:
+                        continue
+                    atom_name = parts[1]
+                    res_full = parts[7]
+                    res_name, res_num = res_full[:3], res_full[3:]
+                    if atom_name in accepted_atoms:
+                        residue_map[(res_name, res_num)].append((atom_name, line))
+            return residue_map
+
+        def GenerateAugmentedMatrices(selected_path_: str,
+                                      abMatrix_: np.ndarray,
+                                      agMatrix_: np.ndarray,
+                                      gbsa: float,
+                                      n_augmentations: int = 5) -> None:
+            """Generate augmented versions of the matrices with random rotations"""
+            for i in range(n_augmentations):
+                # Generate random rotation matrix (same for both matrices)
+                rotation = Rotation.random().as_matrix()
+                # Apply rotation to coordinates of both matrices
+                aug_ab = apply_rotation(abMatrix_.copy(), rotation)
+                aug_ag = apply_rotation(agMatrix_.copy(), rotation)
+                # Save augmented versions
+                SaveResults(selected_path_, aug_ab, aug_ag, gbsa, f"_aug_{i}")
+                del aug_ag, aug_ab
+
+        def apply_rotation(matrix: np.ndarray, rotation: np.ndarray) -> np.ndarray:
+            """Apply rotation to the x,y,z coordinates in the matrix"""
+            # Coordinates are assumed to be the first 3 features
+            coords = matrix[..., :3]  # Shape: (X, 5, 3)
+            rotated_coords = np.dot(coords, rotation.T)  # Apply rotation to all coordinates
+
+            # Replace original coordinates with rotated ones
+            rotated_matrix = matrix.copy()
+            rotated_matrix[..., :3] = rotated_coords
+            del matrix
+            return rotated_matrix
+
+        def process_interface(interface_file: str, target_map: dict) -> np.ndarray:
+            """Process interface file against target map and return matrix"""
+            residue_data = defaultdict(dict)
+
+            with open(interface_file, 'r') as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) < 9:
+                        continue
+
+                    atom_name = parts[1]
+                    res_full = parts[7]
+                    res_name, res_num = res_full[:3], res_full[3:]
+                    key = (res_name, res_num)
+
+                    if atom_name in accepted_atoms and key in target_map:
+                        x, y, z = map(float, parts[2:5])
+                        atom_type = parts[5]
+                        charge = float(parts[8])
+
+                        atom_type_onehot = np.zeros(len(eleTypes))
+                        if atom_type in eleTypes:
+                            atom_type_onehot[eleTypes.index(atom_type)] = 1.0
+
+                        residue_onehot = np.zeros(len(amino_acids))
+                        if res_name in amino_acids:
+                            residue_onehot[amino_acids.index(res_name)] = 1.0
+
+                        features = np.hstack([x, y, z, charge, atom_type_onehot, residue_onehot])
+                        residue_data[key][atom_name] = features
+
+            # Converto ad array su quanti residui ci sono
+            X = len(residue_data)
+            matrix = np.zeros((X, len(accepted_atoms), 34))
+
+            for i, (res_key, atoms) in enumerate(residue_data.items()):
+                for j, atom_name in enumerate(accepted_atoms):
+                    if atom_name in atoms:
+                        matrix[i, j] = atoms[atom_name]
+
+            return matrix
+
+        def SaveResults(selected_path_: str, abMatrix_: np.ndarray, agMatrix_: np.ndarray, gbsa: float, suffix=""):
+            """Save matrices and GBSA value to disk"""
+            # Create saved_results directory if it doesn't exist
+            save_dir = os.path.join(selected_path_, "saved_results")
+            os.makedirs(save_dir, exist_ok=True)
+
+            # Save matrices as numpy files
+            np.save(os.path.join(save_dir, f"abMatrix{suffix}.npy"), abMatrix_)
+            np.save(os.path.join(save_dir, f"agMatrix{suffix}.npy"), agMatrix_)
+            np.save(os.path.join(save_dir, "label.npy"), gbsa)
+            print(f"Saving abMatrix {abMatrix_.shape} abMatrix{suffix}")
+            print(f"Saving agMatrix {agMatrix_.shape} agMatrix{suffix}")
+            print("")
+
+        # Build matrices
+        rec_map = build_residue_map(f'{selected_path}/rec.mol2')
+        lig_map = build_residue_map(f'{selected_path}/lig.mol2')
+
+        abMatrix = process_interface(f'{selected_path}/interface.mol2', rec_map)
+        agMatrix = process_interface(f'{selected_path}/interface.mol2', lig_map)
+
+        print(f"Generated matrices for {pdbID}:")
+        print(f"original abMatrix shape: {abMatrix.shape}")
+        print(f"original agMatrix shape: {agMatrix.shape}")
+        print(f"GBSA: {self.GBSA}\n")
+        SaveResults(selected_path, abMatrix, agMatrix, self.GBSA)
+        GenerateAugmentedMatrices(selected_path, abMatrix, agMatrix, self.GBSA)
+        del abMatrix, agMatrix
 
 
-# elements = {'H': 1.008, 'He': 4.002, 'Li': 6.941, 'Be': 9.012, 'B': 10.811, 'C': 12.011, 'N': 14.007,
-        #             'O': 15.999, 'F': 18.998, 'Ne': 20.180, 'Na': 22.990, 'Mg': 24.305, 'Al': 26.982, 'Si': 28.085,
-        #             'P': 30.974, 'S': 32.066, 'Cl': 35.453, 'Ar': 39.948, 'K': 39.098, 'Ca': 40.078, 'Sc': 44.956,
-        #             'Ti': 47.867, 'V': 50.942, 'Cr': 51.996, 'Mn': 54.938, 'Fe': 55.845, 'Co': 58.933, 'Ni': 58.693,
-        #             'Cu': 63.546, 'Zn': 65.38, 'Ga': 69.723, 'Ge': 72.64, 'As': 74.922, 'Se': 78.96, 'Br': 79.904,
-        #             'Kr': 83.798, 'Rb': 85.468, 'Sr': 87.62, 'Y': 88.906, 'Zr': 91.224, 'Nb': 92.906, 'Mo': 95.96,
-        #             'Tc': 98.0, 'Ru': 101.07, 'Rh': 102.906, 'Pd': 106.42, 'Ag': 107.868, 'Cd': 112.411, 'In': 114.818,
-        #             'Sn': 118.71, 'Sb': 121.76, 'Te': 127.6, 'I': 126.904, 'Xe': 131.293, 'Cs': 132.905, 'Ba': 137.327,
-        #             'La': 138.905, 'Ce': 140.116, 'Pr': 140.908, 'Nd': 144.242, 'Pm': 145.0, 'Sm': 150.36,
-        #             'Eu': 151.964,
-        #             'Gd': 157.25, 'Tb': 158.925, 'Dy': 162.5, 'Ho': 164.930, 'Er': 167.259, 'Tm': 168.934, 'Yb': 173.04,
-        #             'Lu': 174.967, 'Hf': 178.49, 'Ta': 180.948, 'W': 183.84, 'Re': 186.207, 'Os': 190.23, 'Ir': 192.217,
-        #             'Pt': 195.084, 'Au': 196.967, 'Hg': 200.59, 'Tl': 204.383, 'Pb': 207.2, 'Bi': 208.980,
-        #             'Th': 232.038,
-        #             'Pa': 231.036, 'U': 238.029}
+def ParallelFeaturize(dbDict, root) -> None:
+    featurizer = FeaturizerClass(dbDict, root)
+    cpuUnits = int(cpu_count() // 4)
+    with Pool(processes=cpuUnits) as p:
+        for pdbID, chains_and_type in dbDict.items():
+            p.apply_async(featurizer.Featurize, args=(pdbID, chains_and_type,))
+        p.close()
+        p.join()
+    logging.debug("All processes have completed.")

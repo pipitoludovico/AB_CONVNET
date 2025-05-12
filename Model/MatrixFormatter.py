@@ -1,52 +1,108 @@
 import os
 import numpy as np
-import pandas as pd
+import json
 
 
 def FormatData():
-    samples = []
+    def pad_matrix(mat, target_residues):
+        pad_len = target_residues - mat.shape[0]
+        if pad_len <= 0:
+            return mat
+        padding = np.zeros((pad_len, 5, 34), dtype=mat.dtype)
+        return np.vstack([mat, padding])
+
+    def load_pad_config():
+        with open("matrices/pad_config.json", "r") as f:
+            config = json.load(f)
+        return config["max_ab_len"], config["max_ag_len"]
 
     def LoadData():
-        cwd = os.getcwd()
-        os.chdir(cwd)
-        numberOfPairs: int = 50
+        os.makedirs('matrices', exist_ok=True)
+        base_path = "./selected"
+        samples = []
 
-        if not os.path.exists("matrices"):
-            os.makedirs('matrices', exist_ok=True)
-        for pdbFolder in os.listdir("selected"):
-            file_path = os.path.join("selected", pdbFolder, "saved_results", "protein_data_noDEC.npy")
-            if os.path.exists(file_path):
-                try:
-                    sample = np.load(file_path, allow_pickle=True)
-                    if sample.shape[0] == ((numberOfPairs * 60) + 1):  # Verify sample size
-                        samples.append(sample)
-                except Exception as e:
-                    print(f"Error loading {pdbFolder}: {e}")
-        print(f"Loaded {len(samples)} valid samples.")
+        # Compute max lengths
+        max_ab_len = 0
+        max_ag_len = 0
+        json_path = "matrices/pad_config.json"
+        if not os.path.exists(json_path):
+            for pdbFolder in os.listdir(base_path):
+                saved_results_path = os.path.join(base_path, pdbFolder, "saved_results")
+                if not os.path.isdir(saved_results_path):
+                    continue
 
-    def remove_outliers_by_label(samples_, lower_percentile=15, upper_percentile=85):
-        labels = [sample[-1] for sample in samples_]  # Estraggo le label (ultima colonna di ogni sample)
+                for file in os.listdir(saved_results_path):
+                    file_path = os.path.join(saved_results_path, file)
+                    if file.endswith(".npy"):
+                        try:
+                            data = np.load(file_path)
+                            if 'abMatrix' in file:
+                                max_ab_len = max(max_ab_len, data.shape[0])
+                            elif 'agMatrix' in file:
+                                max_ag_len = max(max_ag_len, data.shape[0])
+                        except Exception as e:
+                            print(f"Failed to load {file_path}: {e}")
+            with open("matrices/pad_config.json", "w") as f:
+                json.dump({"max_ab_len": max_ab_len, "max_ag_len": max_ag_len}, f)
+        else:
+            max_ab_len, max_ag_len = load_pad_config()
+
+        # Load data
+        for pdbFolder in os.listdir(base_path):
+            folder_path = os.path.join(base_path, pdbFolder, "saved_results")
+            if not os.path.isdir(folder_path):
+                continue
+            ab_path = None
+            ag_path = None
+            label_path = None
+            # carico le path
+            for file in os.listdir(folder_path):
+                if "abMatrix" in file and file.endswith(".npy"):
+                    ab_path = os.path.join(folder_path, file)
+                elif "agMatrix" in file and file.endswith(".npy"):
+                    ag_path = os.path.join(folder_path, file)
+                elif file == "label.npy":
+                    label_path = os.path.join(folder_path, file)
+                # qui carico gli array...
+                if ab_path and ag_path and label_path:
+                    ab = np.load(ab_path)
+                    ag = np.load(ag_path)
+                    gbsa = np.load(label_path)
+                    ab_padded = pad_matrix(ab, max_ab_len)
+                    ag_padded = pad_matrix(ag, max_ag_len)
+                    samples.append((ab_padded, ag_padded, gbsa))
+        return samples
+
+    def remove_outliers_by_label(samples_, lower_percentile=5, upper_percentile=95):
+        labels = [sample[2] for sample in samples_]
         labels_array = np.array(labels)
-        # calcolo i percentili
         lower_bound = np.percentile(labels_array, lower_percentile)
         upper_bound = np.percentile(labels_array, upper_percentile)
         print(f"Filtering labels using percentiles: Values outside [{lower_bound:.2f}, {upper_bound:.2f}]")
-        # Filtra i sample basandoti sui limiti delle GBSA
-        filtered = [sample for sample in samples if lower_bound <= sample[-1] <= upper_bound]
 
+        filtered = [sample for sample in samples_ if lower_bound <= sample[2] <= upper_bound]
         print(f"Filtered dataset size: {len(filtered)} (removed {len(samples_) - len(filtered)} samples)")
         return filtered
 
-    def SavePadded(filtered_samples_):
-        print("\nDataset description before saving:\n")
-        df = pd.DataFrame(filtered_samples_)
-        print(df.describe())
-        np.save('matrices/padded.npy', filtered_samples_, allow_pickle=True)
-        print("Dataset saved to 'matrices/padded.npy'")
+    def SavePadded(samples, path='matrices/padded_dataset.npz'):
+        ab_all = []
+        ag_all = []
+        gbsa_all = []
 
-    LoadData()
-    samples_array = np.array(samples, dtype=float)
+        for ab, ag, gbsa in samples:
+            ab_all.append(ab)
+            ag_all.append(ag)
+            gbsa_all.append(gbsa)
 
-    # Rimuovi outlier basati sulle label
-    filtered_samples = remove_outliers_by_label(samples_array, lower_percentile=0, upper_percentile=100)
-    SavePadded(filtered_samples)
+        np.savez_compressed(
+            path,
+            ab=np.array(ab_all, dtype=np.float32),
+            ag=np.array(ag_all, dtype=np.float32),
+            gbsa=np.array(gbsa_all, dtype=np.float32)
+        )
+        print(f"Saved preprocessed data to: {path}")
+
+    samples_list = LoadData()
+    filtered_samples = remove_outliers_by_label(samples_list, lower_percentile=1, upper_percentile=99)
+    np.random.shuffle(filtered_samples)  # val loss improves a lot
+    SavePadded(samples_list)

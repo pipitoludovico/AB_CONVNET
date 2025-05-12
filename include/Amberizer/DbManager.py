@@ -18,7 +18,7 @@ class DatabaseManager:
         self.dbFolder = dbFolder
         self.processes = []
         self.complex_data = {}
-        self.quarterCPUcount = int((cpu_count()) / 4)
+        self.quarterCPUcount = int((cpu_count()) / 2)
         os.makedirs('./selected', exist_ok=True)
 
     def CopyFilesFromFolderToTarget(self, copy_=False):

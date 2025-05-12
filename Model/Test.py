@@ -1,11 +1,8 @@
 from os import walk, path
 import numpy as np
 import joblib
-
 from keras.models import load_model
 from keras.optimizers import Adam
-from tensorflow.keras.models import load_model
-from tensorflow.keras.optimizers import Adam
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 
@@ -26,7 +23,7 @@ def Test(args):
 
     # Load the model
     try:
-        model = load_model('model.keras', compile=False)  # Load the model without compiling
+        model = load_model(args['model'], compile=False)  # Load the model without compiling
         model.compile(optimizer=Adam(learning_rate=args['lr']),
                       loss="mean_absolute_error",
                       metrics=["mean_absolute_error"])
@@ -63,9 +60,8 @@ def Test(args):
                 if sample_data.ndim == 1:  # Reshape if it's 1D
                     sample_data = sample_data.reshape(1, -1)
 
-                # Pad to ensure the correct number of features (2600)
-                if sample_data.shape[1] < 4800:
-                    padding = np.zeros((sample_data.shape[0], 2600 - sample_data.shape[1]))
+                if sample_data.shape[1] < 1700:
+                    padding = np.zeros((sample_data.shape[0], 1700 - sample_data.shape[1]))
                     sample_data = np.hstack((sample_data, padding))
 
                 # Scale the features
