@@ -23,30 +23,49 @@ class ConditionalGAN:
         self.disc = ConditionalDiscriminator()
         self.cross_entropy = BinaryCrossentropy(from_logits=False)
         self.mse = MeanSquaredError()
-        self.gen_optimizer = Adam(1e-4)
-        self.disc_optimizer = Adam(1e-4)
+        self.gen_optimizer = Adam(3e-4)
+        self.disc_optimizer = Adam(5e-5)
 
     def generator_loss(self, valid_pred, gbsa_pred, target_label):
-        adv_loss = self.cross_entropy(tf.ones_like(valid_pred), valid_pred)
+        adv_loss = self.cross_entropy(tf.ones_like(valid_pred) * 0.9, valid_pred)
         reg_loss = self.mse(target_label, gbsa_pred)
-        return adv_loss + reg_loss
+        return adv_loss + 0.05 * reg_loss  # Further reduce MSE influence
 
     def discriminator_loss(self, valid_real, valid_fake, gbsa_pred_real, real_labels):
-        # Add label smoothing/noise
-        real_label_noise = tf.random.uniform(tf.shape(valid_real), minval=0.9, maxval=1.0)
-        fake_label_noise = tf.random.uniform(tf.shape(valid_fake), minval=0.0, maxval=0.1)
+        # Label smoothing and flipping parameters
+        real_label_smooth_range = (0.9, 1.0)
+        fake_label_smooth_range = (0.0, 0.2)
+        label_flip_prob = 0.05
 
-        real_loss = self.cross_entropy(real_label_noise, valid_real)
-        fake_loss = self.cross_entropy(fake_label_noise, valid_fake)
+        batch_size = tf.shape(valid_real)[0]
+
+        flip_mask = tf.random.uniform(tf.shape(valid_real)) < label_flip_prob
+        real_targets = tf.where(
+            flip_mask,
+            tf.zeros_like(valid_real),
+            tf.random.uniform(tf.shape(valid_real), *real_label_smooth_range)
+        )
+
+        # Fake labels: 0-20% of 1.0
+        fake_targets = tf.random.uniform(
+            tf.shape(valid_fake),
+            *fake_label_smooth_range
+        )
+
+        # Loss calculations
+        real_loss = self.cross_entropy(real_targets, valid_real)
+        fake_loss = self.cross_entropy(fake_targets, valid_fake)
         reg_loss = self.mse(real_labels, gbsa_pred_real)
 
-        return real_loss + fake_loss + reg_loss
+        # Combine losses
+        return tf.reduce_mean(real_loss + fake_loss) + reg_loss
 
     # @tf.function
     def train_step(self, ab_real, ag_real, gbsa_real):
         batch_size = tf.shape(ab_real)[0]
         noise = tf.random.normal([batch_size, self.noise_dim])
-        target_labels = gbsa_real  # Now using actual GBSA values for conditioning
+        target_labels = gbsa_real + tf.random.normal(tf.shape(gbsa_real), stddev=0.1)
+        # target_labels = gbsa_real  # Now using actual GBSA values for conditioning
 
         with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
             ag_fake = self.gen(noise, target_labels)
@@ -162,7 +181,7 @@ def TrainAndGenerate(args):
     print("Scaled stuff")
     # === Initialize and train GAN ===
     gan = ConditionalGAN(
-        noise_dim=100,
+        noise_dim=512,
         generator_kwargs={
             'eleTypes': eleTypes,
             'amino_acids': amino_acids,
@@ -172,12 +191,10 @@ def TrainAndGenerate(args):
     print("Gan Built")
     gan.train(ab, ag, gbsa_scaled, epochs=args['epoch'], batch_size=args['batch'])
     print("Finished GAN training")
-    # === Generate new ag_input samples ===
     noise = tf.random.normal([10, gan.noise_dim])
     target = tf.fill([10, 1], -1.5)  # Provide a meaningful scaled GBSA value, e.g., -1.5
     generated_ag = gan.gen(noise, target).numpy()
 
-    # Optional: Inverse-transform generated ag (x,y,z only) to real-world scale
     gen_ag_cont = generated_ag[..., :3].reshape(-1, 3)
     gen_ag_cont_rescaled = feature_scaler.inverse_transform(gen_ag_cont)
     generated_ag[..., :3] = gen_ag_cont_rescaled.reshape(generated_ag.shape[0], generated_ag.shape[1],

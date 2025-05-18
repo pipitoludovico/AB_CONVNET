@@ -1,26 +1,28 @@
 from keras import layers, Model, Input
 
 
-def Net(ab_shape=(92, 5, 34), ag_shape=(97, 5, 34)):
+def Net(ab_shape=(None, 5, 34), ag_shape=(None, 5, 34)):
     ab_input = Input(shape=ab_shape, name="ab_input")  # (residues, atoms, features)
     ag_input = Input(shape=ag_shape, name="ag_input")
     gbsa_input = Input(shape=(1,), name="gbsa_input")
 
-    def encode_seq(seq_input):
-        # Add a channel dimension so shape becomes (residues, atoms, features, 1)
-        x = layers.Reshape((seq_input.shape[1], seq_input.shape[2], seq_input.shape[3], 1))(seq_input)
-        x = layers.TimeDistributed(layers.Conv2D(32, (3, 3), padding='same', activation='relu'))(x)
-        x = layers.TimeDistributed(layers.Flatten())(x)
-        x = layers.GRU(128)(x)
+    def encode_entity(entity_input):
+        # Flatten atom-level features
+        x = layers.TimeDistributed(layers.Flatten())(entity_input)  # (R, D)
+        x = layers.Bidirectional(layers.GRU(128, return_sequences=True))(x)  # contextualize across residues
+        x = layers.GlobalAveragePooling1D()(x)  # (D,)
         return x
 
-    x_ab = encode_seq(ab_input)
-    x_ag = encode_seq(ag_input)
+    x_ab = encode_entity(ab_input)
+    x_ag = encode_entity(ag_input)
 
     x = layers.Concatenate()([x_ab, x_ag, gbsa_input])
+    x = layers.Dense(256, activation='relu')(x)
+    x = layers.Dropout(0.3)(x)
     x = layers.Dense(128, activation='relu')(x)
+    x = layers.Dropout(0.2)(x)
 
-    # Two heads: real/fake classification and GBSA regression
+    # Outputs
     validity = layers.Dense(1, activation='sigmoid', name='validity')(x)
     gbsa_pred = layers.Dense(1, activation='linear', name='gbsa_pred')(x)
 
