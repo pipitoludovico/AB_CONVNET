@@ -1,23 +1,23 @@
-import numpy as np
-import tensorflow as tf
 from keras.models import load_model
 from keras.optimizers import Adam
-from keras.losses import Huber
 from keras.callbacks import ModelCheckpoint
 from Model.Models import Net
-from sklearn.preprocessing import StandardScaler
 from Model.CallBacks import lr_reduction, early_stopping
 import joblib
-from sklearn.metrics import mean_absolute_error
+
 import os
+import numpy as np
+import tensorflow as tf
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_absolute_error
+
 
 # os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
-
 def Train(args):
     if os.path.exists("best_model.keras"):
-        print("==> Found existing model. Loading...")
-        model = load_model("best_model.keras", compile=False)
+        print("Found existing model. Loading...")
+        model = load_model("best_model.keras", compile=False, safe_mode=False)
 
         # Load scalers
         feature_scaler = joblib.load('feature_scaler.pkl')
@@ -34,25 +34,16 @@ def Train(args):
         ag_cont = ag[..., continuous_idx].reshape(-1, 3)
 
         ab[..., continuous_idx] = feature_scaler.transform(ab_cont).reshape(ab.shape[0], ab.shape[1], ab.shape[2], 3)
-        ag[..., continuous_idx] = feature_scaler.transform(ag_cont).reshape(ag.shape[0], ag.shape[1], ag.shape[2], 3)
+        ag[..., continuous_idx] = feature_scaler.transform(ag_cont).reshape(ab.shape[0], ab.shape[1], ab.shape[2], 3)
         gbsa_scaled = label_scaler.transform(gbsa)
 
         dataset = tf.data.Dataset.from_tensor_slices((
-            {'ab_input': ab, 'ag_input': ag, 'gbsa_input': gbsa_scaled},
-            {'validity': np.ones((len(gbsa_scaled), 1)), 'gbsa_pred': gbsa_scaled}
+            {'ab_input': ab, 'ag_input': ag},
+            gbsa_scaled
         )).batch(args['batch']).prefetch(tf.data.AUTOTUNE)
 
         print("Evaluating...")
-
-        preds_dict = model.predict(dataset)
-
-        if isinstance(preds_dict, dict):
-            preds_scaled = preds_dict['gbsa_pred']
-        # If list: assume it's [validity_pred, gbsa_pred]
-        elif isinstance(preds_dict, list) or isinstance(preds_dict, tuple):
-            preds_scaled = preds_dict[1]
-        else:
-            raise TypeError("Unexpected prediction output format")
+        preds_scaled = model.predict(dataset)
 
         if preds_scaled.ndim > 2:
             preds_scaled = preds_scaled.reshape(-1, 1)
@@ -87,14 +78,11 @@ def Train(args):
         label_scaler = StandardScaler()
         gbsa_scaled = label_scaler.fit_transform(gbsa)
 
-        validity_labels = np.ones((len(gbsa_scaled), 1), dtype=np.float32)
-
         print("Calling the dataset")
         dataset = tf.data.Dataset.from_tensor_slices((
-            {'ab_input': ab, 'ag_input': ag, 'gbsa_input': gbsa_scaled},
-            {'validity': validity_labels, 'gbsa_pred': gbsa_scaled}
+            {'ab_input': ab, 'ag_input': ag},
+            gbsa_scaled
         ))
-        # Simple split: 90% train, 10% val
         val_size = int(0.1 * len(gbsa_scaled))
         val_dataset = dataset.take(val_size).batch(args['batch']).prefetch(tf.data.AUTOTUNE)
         train_dataset = dataset.skip(val_size).batch(args['batch']).prefetch(tf.data.AUTOTUNE)
@@ -104,8 +92,8 @@ def Train(args):
         optimizer = Adam(learning_rate=args["lr"])
         model.compile(
             optimizer=optimizer,
-            loss={'validity': 'binary_crossentropy', 'gbsa_pred': Huber()},
-            loss_weights={'validity': 1.0, 'gbsa_pred': 1.0}
+            loss='mse',
+            metrics=['mae']
         )
 
         best_ckpt = ModelCheckpoint(
@@ -116,7 +104,7 @@ def Train(args):
             verbose=1
         )
 
-        print("Train begins")
+        print("Training begins")
         history = model.fit(
             train_dataset,
             validation_data=val_dataset,

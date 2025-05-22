@@ -53,14 +53,8 @@ class FeaturizerClass:
         u = Mda.Universe(f'{selected_path}/complex_minimized_chains.pdb')
 
         try:
-            # ab = u.select_atoms(f"chainID {hChain_} {lChain_}")
-            # ag = u.select_atoms(f"chainID {agChain_}")
-            # ab.write(f"{selected_path}/rec.pdb")
-            # ag.write(f"{selected_path}/lig.pdb")
-
             ag_neighbors = u.select_atoms(f"same residue as (protein and around 5 chainID {agChain_})")
-            hl_neighbors = u.select_atoms(
-                f"same residue as (protein and around 5 (chainID {hChain_} or chainID {lChain_}))")
+            hl_neighbors = u.select_atoms(f"same residue as (protein and around 5 (chainID {hChain_} or chainID {lChain_}))")
             ag_neighbors.write(f'{selected_path}/rec.pdb')
             hl_neighbors.write(f'{selected_path}/lig.pdb')
             interface = ag_neighbors + hl_neighbors

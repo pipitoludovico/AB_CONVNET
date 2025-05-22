@@ -1,111 +1,58 @@
 import tensorflow as tf
-from keras import layers, Model
-from keras.layers import MultiHeadAttention, LayerNormalization
+from keras import layers, Model, Input
 
 
-# Replace the shared Sequential block with a custom subclassed model
-class SharedBlock(layers.Layer):
-    def __init__(self):
+class CNNConditionalGenerator(Model):
+    def __init__(self, number_of_residues: int = 5, feature_dim=34, atom_num=5, hidden_dim=256):
         super().__init__()
-        self.dense1 = layers.Dense(1024)
-        self.reshape = layers.Reshape((16, 64))  # New shape for attention
-        self.attn = MultiHeadAttention(num_heads=4, key_dim=16)
-        self.norm = LayerNormalization()
-        self.dense2 = layers.Dense(4096)
-        self.leaky = layers.LeakyReLU(0.2)
 
-    def call(self, x):
-        x = self.dense1(x)
-        x = self.reshape(x)  # Shape: (batch, 16, 64)
-        attn_output = self.attn(x, x)  # Self-attention
-        x = self.norm(x + attn_output)  # Residual connection
-        x = layers.Flatten()(x)
-        x = self.dense2(x)
-        return self.leaky(x)
+        # Encode antigene con CNN + GRU simile discriminator per coerenza
+        self.conv2D = layers.TimeDistributed(layers)
+        self.conv1 = layers.TimeDistributed(layers.Conv1D(64, 3, padding='same', activation='relu'))
+        self.gru_ag = layers.Bidirectional(layers.GRU(hidden_dim, return_sequences=False))
+        self.dense_emb = layers.Dense(hidden_dim, activation='relu')
 
+        # Embedding per posizione residui anticorpo
+        self.pos_embedding = layers.Embedding(input_dim=max_residues, output_dim=hidden_dim)
 
-class ConditionalGenerator(Model):
-    def __init__(self,
-                 noise_dim=256,
-                 label_dim=1,
-                 ag_len=97,
-                 atom_n=5,
-                 coord_dim=3,
-                 eleTypes=None,  # list of element type strings
-                 amino_acids=None,  # list of residue names
-                 temperature=0.8
-                 ):
-        super().__init__()
-        assert eleTypes and amino_acids
+        # Decoder RNN + dense per generare coordinate backbone + features
+        self.gru_dec = layers.GRU(hidden_dim, return_sequences=True)
+        self.dense_out = layers.TimeDistributed(layers.Dense(atom_num * feature_dim))  # output shape (B, max_res, 5*34)
 
-        self.noise_dim = noise_dim
-        self.label_dim = label_dim
-        self.ag_len = ag_len
-        self.atom_n = atom_n
-        self.coord_dim = coord_dim
-        self.temperature = temperature
+    def call(self, inputs):
+        ag, K = inputs  # ag shape (B, residues, atoms, features)
+        B = tf.shape(ag)[0]
 
-        self.N_ele = len(eleTypes)
-        self.N_aa = len(amino_acids)
+        batch_size = tf.shape(ag)[0]
+        residues = tf.shape(ag)[1]
+        atoms = tf.shape(ag)[2]
+        features = tf.shape(ag)[3]
 
-        # Output dimensions
-        self.flat_coords = ag_len * atom_n * coord_dim
-        self.flat_ele = ag_len * atom_n * self.N_ele
-        self.flat_aa = ag_len * atom_n * self.N_aa
-        self.flat_charge = ag_len * atom_n * 1
+        ag_flat = tf.reshape(ag, [batch_size, residues, atoms * features])  # (B, residues, atoms*features)
 
-        self.label_embedding = tf.keras.Sequential([
-            layers.Dense(128, activation='relu'),
-            layers.Dense(128)
-        ])
+        # CNN 1D sul residuo antigene (tempo)
+        x = self.conv1(ag_flat)  # (B, X, 64)
+        x = self.gru_ag(x)  # (B, hidden_dim*2)
+        x = self.dense_emb(x)  # (B, hidden_dim)
 
-        self.shared = SharedBlock()
+        # Positional embeddings per anticorpo residui da generare
+        pos = tf.range(self.max_residues)
+        pos_embed = self.pos_embedding(pos)  # (max_residues, hidden_dim)
+        pos_embed = tf.expand_dims(pos_embed, 0)
+        pos_embed = tf.tile(pos_embed, [B, 1, 1])  # (B, max_residues, hidden_dim)
 
-        self.coord_head = tf.keras.Sequential([
-            layers.Dense(512), layers.LeakyReLU(0.2),
-            layers.Dense(self.flat_coords, activation='linear')  # normalized to [-1, 1]
-        ])
+        # Espandi embedding antigene e somma con pos embed
+        x_exp = tf.expand_dims(x, 1)  # (B,1,hidden_dim)
+        dec_input = x_exp + pos_embed  # (B, max_residues, hidden_dim)
 
-        self.charge_head = tf.keras.Sequential([
-            layers.Dense(512), layers.LeakyReLU(0.2),
-            layers.Dense(self.flat_charge, activation='tanh')
-        ])
+        # Decoder RNN
+        h = self.gru_dec(dec_input)  # (B, max_residues, hidden_dim)
+        out = self.dense_out(h)  # (B, max_residues, 5*34)
+        out = tf.reshape(out, [B, self.max_residues, self.atom_num, self.feature_dim])  # (B, max_res, 5, 34)
 
-        self.ele_head = tf.keras.Sequential([
-            layers.Dense(512), layers.LeakyReLU(0.2),
-            layers.Dense(self.flat_ele)  # logits → softmax later
-        ])
+        # Mask out residui oltre K
+        mask = tf.sequence_mask(K, maxlen=self.max_residues, dtype=tf.float32)
+        mask = tf.reshape(mask, [B, self.max_residues, 1, 1])
+        out = out * mask
 
-        self.aa_head = tf.keras.Sequential([
-            layers.Dense(512), layers.LeakyReLU(0.2),
-            layers.Dense(self.flat_aa)  # logits → softmax later
-        ])
-
-    def call(self, noise, labels):
-        label_embed = self.label_embedding(labels)
-        x = tf.concat([noise, label_embed], axis=1)
-        x = self.shared(x)
-        return self.build_outputs(x)
-
-    def build_outputs(self, x):
-        batch_size = tf.shape(x)[0]
-
-        # Coordinates
-        c = self.coord_head(x)
-        c = tf.reshape(c, (batch_size, self.ag_len, self.atom_n, self.coord_dim))
-
-        # Partial charge
-        q = self.charge_head(x)
-        q = tf.reshape(q, (batch_size, self.ag_len, self.atom_n, 1))
-
-        # Element types
-        e_logits = self.ele_head(x)
-        e_logits = tf.reshape(e_logits, (batch_size, self.ag_len, self.atom_n, self.N_ele))
-        e = tf.nn.softmax(e_logits / self.temperature)
-
-        # Amino acids
-        a_logits = self.aa_head(x)
-        a_logits = tf.reshape(a_logits, (batch_size, self.ag_len, self.atom_n, self.N_aa))
-        a = tf.nn.softmax(a_logits / self.temperature)
-
-        return tf.concat([c, q, e, a], axis=-1)
+        return out, K

@@ -105,4 +105,4 @@ def FormatData():
     samples_list = LoadData()
     filtered_samples = remove_outliers_by_label(samples_list, lower_percentile=1, upper_percentile=99)
     np.random.shuffle(filtered_samples)  # val loss improves a lot
-    SavePadded(samples_list)
+    SavePadded(filtered_samples)

@@ -41,14 +41,23 @@
 #     print("NO")
 
 
-import numpy as np
+# import numpy as np
+#
+# _ = np.array([[1, 2, 3], [4, 5, 6]])
+# padded = np.vstack((_, np.zeros(shape=(3, 3))))
+#
+# _1 = np.array([[1, 2, 3], [4, 5, 6]])
+# padded1 = np.vstack((_, np.zeros(shape=(6, 3))))
+#
+# print(padded.shape, padded1.shape)
+#
+# label = np.array(-45, )
 
-_ = np.array([[1, 2, 3], [4, 5, 6]])
-padded = np.vstack((_, np.zeros(shape=(3, 3))))
+import json
 
-_1 = np.array([[1, 2, 3], [4, 5, 6]])
-padded1 = np.vstack((_, np.zeros(shape=(6, 3))))
+with open("samples_to_test.json", "r") as jfile:
+    data = json.load(jfile)
 
-print(padded.shape, padded1.shape)
-
-label = np.array(-45, )
+for entry in data:
+    h, l = entry['H_Chain'], entry['L_Chain']
+    print(h, l)

@@ -1,237 +1,171 @@
-from os import walk, path
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+import os
 import numpy as np
 import joblib
+import json
+from os import path
 from keras.models import load_model
 from keras.optimizers import Adam
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from keras.losses import Huber
 
 
 def Test(args):
     """
-    Test the model using samples from the './predictions' folder,
-    compare predicted values with actual values from a comparison file,
-    and print results along with evaluation metrics.
+    Test the CNN discriminator model using input matrices from ./predictions/*/
+    Each sample directory should contain: abMatrix*.npy and agMatrix*.npy.
     """
-    # Load the feature scaler and label scaler
+
+    CONTINUOUS_IDX = slice(0, 3)  # x, y, z columns
+
+    # Load pad config
+    try:
+        with open("matrices/pad_config.json", "r") as f:
+            config = json.load(f)
+        MAX_AB_LEN = config["max_ab_len"]
+        MAX_AG_LEN = config["max_ag_len"]
+        print(f"Loaded padding lengths: AB = {MAX_AB_LEN}, AG = {MAX_AG_LEN}")
+    except Exception as e:
+        print(f"Error loading pad_config.json: {e}")
+        return
+
+    # Load scalers
     try:
         feature_scaler = joblib.load('feature_scaler.pkl')
         label_scaler = joblib.load('label_scaler.pkl')
-        print("Feature scaler and label scaler loaded successfully.")
+        print("Feature and label scalers loaded successfully.")
     except Exception as e:
-        print(f"Error loading scalers: {e}")
-        return None
+        print(f"Scaler loading error: {e}")
+        return
 
     # Load the model
     try:
-        model = load_model(args['model'], compile=False)  # Load the model without compiling
-        model.compile(optimizer=Adam(learning_rate=args['lr']),
-                      loss="mean_absolute_error",
-                      metrics=["mean_absolute_error"])
-        print("Model loaded and compiled successfully.")
+        model = load_model(args['model'], compile=False)
+        model.compile(
+            optimizer=Adam(learning_rate=args['lr']),
+            loss={'validity': 'binary_crossentropy', 'gbsa_pred': Huber()},
+            loss_weights={'validity': 1.0, 'gbsa_pred': 1.0}
+        )
+        print("Model loaded and compiled.")
     except Exception as e:
-        print(f"Error loading model: {e}")
-        return None
+        print(f"Model loading error: {e}")
+        return
 
-    # Initialize lists to store results
-    predictions = []
-    actual_values = []
-    sample_names = []
-    differences = []
-
-    print("\nPredictions for each sample:")
+    print("\nPredictions:")
     print("-" * 80)
-    print(f"{'Sample Name':<20} {'Predicted':<15} {'Real':<15} {'Diff':<15}")
+    print(f"{'Sample':<25} {'Predicted GBSA':<20} {'Pre-scaled':<20}")
     print("-" * 80)
 
-    # Walk through the predictions folder
-    for folder, _, samples in walk('./predictions'):
-        for file in samples:
-            if not file.endswith('npy'):
-                continue
+    base_dir = './predictions'
 
-            name = file.split(".")[0]
-            sample_path = path.join(folder, file)
+    for sample_name in os.listdir(base_dir):
+        sample_dir = path.join(base_dir, sample_name)
+        ab_path = path.join(sample_dir, f"abMatrix{sample_name}.npy")
+        ag_path = path.join(sample_dir, f"agMatrix{sample_name}.npy")
 
-            try:
-                # Load the sample data
-                sample_data = np.load(sample_path)
+        if not (path.exists(ab_path) and path.exists(ag_path)):
+            continue
 
-                # Ensure consistent preprocessing
-                if sample_data.ndim == 1:  # Reshape if it's 1D
-                    sample_data = sample_data.reshape(1, -1)
+        try:
+            ab = np.load(ab_path)  # (R1, 5, 34)
+            ag = np.load(ag_path)  # (R2, 5, 34)
 
-                if sample_data.shape[1] < 1700:
-                    padding = np.zeros((sample_data.shape[0], 1700 - sample_data.shape[1]))
-                    sample_data = np.hstack((sample_data, padding))
+            def pad_matrix(mat, target_len):
+                current_len = mat.shape[0]
+                if current_len < target_len:
+                    padding = np.zeros((target_len - current_len, mat.shape[1], mat.shape[2]))
+                    return np.concatenate([mat, padding], axis=0)
+                return mat[:target_len]
 
-                # Scale the features
-                X_scaled = feature_scaler.transform(sample_data)
-                X_scaled = X_scaled[:, :, np.newaxis]  # Reshape for Conv1D model
+            ab = pad_matrix(ab, MAX_AB_LEN)
+            ag = pad_matrix(ag, MAX_AG_LEN)
 
-                # Generate predictions
-                prediction_scaled = model.predict(X_scaled, verbose=0)
+            # Flatten and scale x, y, z features
+            ab_flat = ab.reshape(-1, ab.shape[-1])
+            ag_flat = ag.reshape(-1, ag.shape[-1])
 
-                # Inverse scale the predictions
-                prediction_unscaled = label_scaler.inverse_transform(prediction_scaled.reshape(-1, 1))[0][0]
+            ab_flat[:, CONTINUOUS_IDX] = feature_scaler.transform(ab_flat[:, CONTINUOUS_IDX])
+            ag_flat[:, CONTINUOUS_IDX] = feature_scaler.transform(ag_flat[:, CONTINUOUS_IDX])
 
-                # Get the real value from the comparison file
-                with open('comparazione', 'r') as comp_file:
-                    real_value = next((float(line.split()[3]) for line in comp_file if name in line), None)
+            ab_scaled = ab_flat.reshape(1, *ab.shape)
+            ag_scaled = ag_flat.reshape(1, *ag.shape)
 
-                if real_value is not None:
-                    # Calculate the difference between predicted and actual values
-                    diff = prediction_unscaled - real_value
+            # Predict
+            preds = model.predict([ab_scaled, ag_scaled], verbose=0)
+            gbsa_pred = label_scaler.inverse_transform(preds)[0, 0]
 
-                    # Store results
-                    predictions.append(prediction_unscaled)
-                    actual_values.append(real_value)
-                    sample_names.append(name)
-                    differences.append(diff)
+            print(f"{sample_name:<25} {gbsa_pred:<20.4f} {gbsa_pred.flatten()[0]:<20.4f}")
 
-                    # Print results for this sample
-                    print(f"{name:<20} {prediction_unscaled:< 15.4f} {real_value:< 15.4f} {diff:< 15.4f}")
-
-            except Exception as e:
-                print(f"Error processing {name}: {e}")
-                continue
-
-    print("-" * 80)
-
-    # Calculate metrics if predictions are available
-    if len(predictions) > 0:
-        predictions = np.array(predictions)
-        actual_values = np.array(actual_values)
-        differences = np.array(differences)
-
-        mae = np.mean(np.abs(differences))
-        mse = np.mean(differences ** 2)
-        rmse = np.sqrt(mse)
-        r2 = 1 - (np.sum((actual_values - predictions) ** 2) / np.sum((actual_values - np.mean(actual_values)) ** 2))
-
-        print("\nTest Set Metrics:")
-        print(f"Mean Absolute Error (MAE): {mae:.4f}")
-        print(f"Mean Squared Error (MSE): {mse:.4f}")
-        print(f"Root Mean Squared Error (RMSE): {rmse:.4f}")
-        print(f"R² Score: {r2:.4f}")
-
-        return {
-            'predictions': predictions,
-            'actual_values': actual_values,
-            'sample_names': sample_names,
-            'differences': differences,
-            'mae': mae,
-            'mse': mse,
-            'rmse': rmse,
-            'r2': r2
-        }
-    else:
-        print("\nNo predictions were successfully generated.")
-        return None
+        except Exception as e:
+            print(f"Error with sample '{sample_name}': {e}")
 
 
 def Test2(args):
     """
-    Testing function that loads the entire training dataset and evaluates the model on it.
-    Applies proper scaling and compares with actual values from comparison file.
+    Predict on the training data used during training to check how well the model fits.
     """
-    # Load the model
+    # Load trained model
     try:
-        model = load_model(args['model'])
-        print(f"Successfully loaded model from {args['model']}")
+        model = load_model(args["model"])
+        print(f"✅ Loaded model from {args['model']}")
     except Exception as e:
-        print(f"Error loading model: {e}")
+        print(f"❌ Error loading model: {e}")
         return None
 
-    # Initialize lists to store results
-    predictions = []
-    actual_values = []
-    sample_names = []
-    differences = []
-
-    print("\nPredictions for each sample:")
-    print("-" * 80)
-    print(f"{'Sample Name':<20} {'Original Shape':<20} {'Predicted':<15} {'Real':<15} {'Diff':<15}")
-    print("-" * 80)
-
-    # Load the scalers (ensure these are saved properly after training)
+    # Load scalers
     feature_scaler = joblib.load("feature_scaler.pkl")
     label_scaler = joblib.load("label_scaler.pkl")
 
-    # Load the training dataset
-    dataset = np.load("./matrices/padded.npy", allow_pickle=True)
-    X = dataset[:, :-1]  # Features (2D: samples x features)
-    y = dataset[:, -1]  # Labels (1D: samples)
+    # Load the same training dataset used during training
+    data = np.load("./matrices/padded_dataset.npz", allow_pickle=True)
+    ab = data['ab']  # shape: (N, ab_len, 5, 34)
+    ag = data['ag']  # shape: (N, ag_len, 5, 34)
+    gbsa = data['gbsa'].reshape(-1, 1)  # shape: (N, 1)
 
-    # Reshape and pad if necessary
-    X_resized = X.copy()  # You may need to modify the reshaping depending on your data
-    if X_resized.shape[1] < 2600:
-        padding = np.zeros((X_resized.shape[0], 2600 - X_resized.shape[1]))
-        X_resized = np.hstack((X_resized, padding))
+    # Scale continuous features: x, y, z at indices 0:3
+    continuous_idx = slice(0, 3)
+    ab_cont = ab[..., continuous_idx].reshape(-1, 3)
+    ag_cont = ag[..., continuous_idx].reshape(-1, 3)
 
-    # Scale features using the saved feature scaler
-    X_scaled = feature_scaler.transform(X_resized)  # Use transform, not fit_transform
-    X_scaled = X_scaled[:, :, np.newaxis]  # Reshape for Conv1D model
+    ab[..., continuous_idx] = feature_scaler.transform(ab_cont).reshape(ab.shape[0], ab.shape[1], ab.shape[2], 3)
+    ag[..., continuous_idx] = feature_scaler.transform(ag_cont).reshape(ag.shape[0], ag.shape[1], ag.shape[2], 3)
 
-    # Generate predictions for the entire dataset
-    predictions_scaled = model.predict(X_scaled, verbose=0)
+    # Predict using model
+    predictions_scaled = model.predict({'ab_input': ab, 'ag_input': ag}, verbose=1)
 
-    # Inverse scale the predictions
-    predictions_unscaled = label_scaler.inverse_transform(predictions_scaled.reshape(-1, 1))
+    # Inverse scale predictions and true labels
+    predictions = label_scaler.inverse_transform(predictions_scaled)
 
-    # Get the real values (from dataset)
-    real_values = y
+    # Compute difference
+    differences = predictions.flatten() - gbsa.flatten()
 
-    for idx, name in enumerate(dataset[:, 0]):  # Assuming the name is in the first column of the dataset
-        prediction_unscaled = predictions_unscaled[idx][0]
-        real = real_values[idx]
-
-        # Calculate the difference between the predicted and real values
-        diff = prediction_unscaled - real
-
-        # Store the results
-        predictions.append(prediction_unscaled)
-        actual_values.append(real)
-        sample_names.append(idx)
-        differences.append(diff)
-
-        # Print detailed output
-        print(f"{idx:<20} {str(X_resized.shape):<20} {prediction_unscaled:< 15.4f} "
-              f"{real:< 15.4f} {diff:< 15.4f}")
-
+    # Print header
+    print("-" * 80)
+    print(f"{'Index':<10} {'Predicted':<15} {'Real':<15} {'Difference':<15}")
     print("-" * 80)
 
-    # Only calculate metrics if we have predictions
-    if len(predictions) > 0:
-        # Convert lists to numpy arrays
-        predictions = np.array(predictions)
-        actual_values = np.array(actual_values)
-        differences = np.array(differences)
+    for i in range(len(predictions)):
+        print(f"{i:<10} {predictions[i][0]:<15.4f} {gbsa[i]} {differences[i]:<15.4f}")
 
-        # Calculate metrics
-        mae = mean_absolute_error(actual_values, predictions)
-        mse = mean_squared_error(actual_values, predictions)
-        rmse = np.sqrt(mse)
-        r2 = r2_score(actual_values, predictions)
+    # Evaluation metrics
+    mae = mean_absolute_error(gbsa, predictions)
+    mse = mean_squared_error(gbsa, predictions)
+    rmse = np.sqrt(mse)
+    r2 = r2_score(gbsa, predictions)
 
-        # Print metrics
-        print("\nTest Set Metrics:")
-        print(f"Mean Absolute Error: {mae:.4f}")
-        print(f"Mean Squared Error: {mse:.4f}")
-        print(f"Root Mean Squared Error: {rmse:.4f}")
-        print(f"R² Score: {r2:.4f}")
-        print(f"Mean Difference: {np.mean(differences):.4f}")
-        print(f"Std Dev of Differences: {np.std(differences):.4f}")
+    print("\n📊 Evaluation on Training Data (Mock Test):")
+    print(f"MAE:   {mae:.4f}")
+    print(f"MSE:   {mse:.4f}")
+    print(f"RMSE:  {rmse:.4f}")
+    print(f"R²:    {r2:.4f}")
+    print(f"Mean Δ: {np.mean(differences):.4f}")
+    print(f"Std Δ:  {np.std(differences):.4f}")
 
-        return {
-            'predictions': predictions,
-            'actual_values': actual_values,
-            'sample_names': sample_names,
-            'differences': differences,
-            'mae': mae,
-            'mse': mse,
-            'rmse': rmse,
-            'r2': r2
-        }
-    else:
-        print("\nNo predictions were successfully generated.")
-        return None
+    return {
+        'predictions': predictions.flatten(),
+        'real_values': gbsa.flatten(),
+        'differences': differences,
+        'mae': mae,
+        'mse': mse,
+        'rmse': rmse,
+        'r2': r2
+    }

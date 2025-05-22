@@ -1,168 +1,158 @@
+from os import path, makedirs
 import sys
-import os
-from os import makedirs, listdir
-from os.path import isdir, isfile, exists
 from subprocess import run
-import numpy as np
-from sys import maxsize
-from include.Interfacer.VMD import GetVDWcontacts
+from collections import defaultdict
+import gc
+import joblib
+import json
 
-np.set_printoptions(threshold=maxsize)
+import numpy as np
+import MDAnalysis as Mda
+
+np.set_printoptions(threshold=sys.maxsize)
 
 matrixData = []
 
-
-def GetFeatures(path_) -> list:
-    if isdir(path_):
-        for idx, file in enumerate(listdir(path_)):
-            if file.endswith(".pdb"):
-                print("\nDoing ", file)
-                matrixData.append((BuildMatrix(idx, path_ + file), file))
-    if isfile(path_):
-        print("\nDoing ", path_)
-        matrixData.append((BuildMatrix(0, path_), path_))
-    return matrixData
+ELE_TYPES = ['N.3', "N.am", "N.4", 'C.3', 'C.2', 'O.2', 'O.3', 'O.co2']
+AMINO_ACIDS = ["ALA", "ARG", "ASN", "ASP", "CYS", "CYX", "GLN", "GLU", "GLY",
+               "HIS", "HIE", "ILE", "LEU", "LYS", "MET", "PHE", "PRO", "SER",
+               "THR", "TRP", "TYR", "VAL"]
+ACCEPTED_ATOMS = ['N', 'CA', 'CB', 'C', 'O']
 
 
-def GetChains(path_):
-    chains = []
-    remarks = False
-    _HCHAIN, _LCHAIN, _AGCHAIN = "", "", ""
-    with open(path_, 'r') as pdb:
-        for line in pdb.readlines():
-            if 'PAIRED_HL' in line:
-                remarks = True
-                _HCHAIN = line.split()[3].split("=")[1]
-                _LCHAIN = line.split()[4].split("=")[1]
-                _AGCHAIN = line.split()[5].split("=")[1]
-            else:
-                if 'ATOM' in line:
-                    if line.split()[4].strip() not in chains:
-                        chains.append(line.split()[4].strip())
-    if remarks:
-        return _HCHAIN, _LCHAIN, _AGCHAIN
-
-    elif len(chains) > 2:
-        print("getting chains from the pdb.")
-        return chains[0], chains[1], chains[2]
+def Sampler(path_) -> None:
+    if path.isdir(path_):
+        with open('samples_to_test.json', 'r') as jsonFile:
+            data = json.load(jsonFile)
+        for entry in data:
+            file_PATH = str(path.join(path_, entry["name"] + ".pdb"))
+            if path.exists(file_PATH):
+                print("\nProcessing", file_PATH)
+                try:
+                    hChain, lChain, agChain = entry['H_Chain'], entry['L_Chain'], entry['AG_Chain']
+                    WriteInterface(file_PATH, hChain, lChain, agChain)
+                    BuildMatrix(file_PATH)
+                except Exception as e:
+                    print(f"{file_PATH} failed. Skipping.\n{e}\nMoving to the next file.")
     else:
-        print("No chain found in the REMARK. Will try using H, L, A as default.")
-        return "H", "L", "A"
+        raise FileNotFoundError(
+            "Please set the path where the pdb files are contained and make sure that the json is in your cwd.")
 
 
-def BuildMatrix(idx: int, path_: str) -> np.array:
-    _HCHAIN, _LCHAIN, _AGCHAIN = "H", "L", "A"
+def WriteInterface(selected_path, hChain_, lChain_, agChain_) -> None:
+    """
+    Creates rec.mol2, lig.mol2 and interface.pdb.
+    """
+    idPath = selected_path.split("/")[-1].replace(".pdb", "")
+    makedirs('./predictions', exist_ok=True)
+    makedirs(f'./predictions/{idPath}', exist_ok=True)
+    u = Mda.Universe(f'{selected_path}')
 
-    # Define atom types and amino acids as in the featurizer
+    try:
+        ag_neighbors = u.select_atoms(f"same residue as (protein and around 5 chainID {agChain_})")
+        hl_neighbors = u.select_atoms(
+            f"same residue as (protein and around 5 (chainID {hChain_} or chainID {lChain_}))")
+        ag_neighbors.write(f'./predictions/{idPath}/rec.pdb')
+        hl_neighbors.write(f'./predictions/{idPath}/lig.pdb')
+        interface = ag_neighbors + hl_neighbors
+        interface.write(f'./predictions/{idPath}/interface.pdb')
+    finally:
+        del u
+        gc.collect()  # Force garbage collection to close file handles because MDA keeps the files open -.-
+
+    for structure in ["interface.pdb", 'rec.pdb', 'lig.pdb']:
+        print(f"Doing {structure} in {selected_path}")  # ./test/8jx3.pdb
+        mol2_filename = structure.split("/")[-1].replace('pdb', 'mol2')
+        mol2_path = f"./predictions/{idPath}/{mol2_filename}"
+        print(f"MOL2PATH {mol2_path}")
+        if not path.exists(mol2_path) or path.getsize(mol2_path) == 0:
+            run(f"obabel -i pdb ./predictions/{idPath}/{structure} -o mol2 -O {mol2_path} --partialcharge eem -xs",
+                shell=True)
+
+
+def BuildMatrix(selected_path: str) -> np.array:
     eleTypes = ['N.3', "N.am", "N.4", 'C.3', 'C.2', 'O.2', 'O.3', 'O.co2']
     amino_acids = ["ALA", "ARG", "ASN", "ASP", "CYS", "CYX", "GLN", "GLU", "GLY", "HIS", "HIE",
                    "ILE", "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP", "TYR", "VAL"]
+    accepted_atoms = ['N', 'CA', 'CB', 'C', 'O']
 
-    try:
-        _HCHAIN, _LCHAIN, _AGCHAIN = GetChains(path_)
-        print("Spotted chains for ", path_, _HCHAIN, _LCHAIN, _AGCHAIN)
-    except Warning:
-        print("Could not find the chains. Trying with the default H L A.")
+    # Load the global feature scaler
+    # feature_scaler = joblib.load("feature_scaler.pkl")
 
-    finalCoordinates = {}
-    couples = []
-    fileName = path_.split("/")[-1]
-    resultFilePath: str = f"predictions/{path_.replace('.pdb', '')}"
+    idPath = selected_path.split("/")[-1].replace(".pdb", "")
 
-    makedirs("predictions", exist_ok=True)
-    makedirs(f"{resultFilePath}", exist_ok=True)
+    def build_residue_map(filename: str) -> dict:
+        residue_map = defaultdict(list)
+        with open(filename, 'r') as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) < 9:
+                    continue
+                atom_name = parts[1]
+                res_full = parts[7]
+                res_name, res_num = res_full[:3], res_full[3:]
+                if atom_name in accepted_atoms:
+                    residue_map[(res_name, res_num)].append((atom_name, line))
+        return residue_map
 
-    # we get the contact pairs and create .int file
-    intPath: str = f"{resultFilePath}/{fileName.replace('.pdb', '.int')}"
-    mol2Path: str = f"{resultFilePath}/{fileName.replace('.pdb', '.mol2')}"
-    makedirs('logs', exist_ok=True)
-    if any(len(chain) > 1 for chain in [_HCHAIN, _LCHAIN, _AGCHAIN]):
-        print(f"Wrong chainIDs for pdb {path_}")
-        return None
-    else:
-        try:
-            GetVDWcontacts(filePath=path_, abChains=" ".join([_HCHAIN, _LCHAIN]),
-                           agChains=" ".join(_AGCHAIN), outputPath=intPath)
+    def process_interface(interface_file: str, target_map: dict) -> np.ndarray:
+        residue_data = defaultdict(dict)
 
-            # then we make the mol2 with coordinates, charges and type
-            if not exists(f"{mol2Path}"):
-                run(f"obabel -i pdb {path_} -o mol2 -O {mol2Path} > {resultFilePath}/obabelLog.log", shell=True)
+        with open(interface_file, 'r') as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) < 9:
+                    continue
 
-            # we check contact points between Ab and Ag and make the pairs
-            with open(intPath, 'r') as contacts:
-                contact_content = contacts.read()
-                results = contact_content.replace("\n", '').split(',')[1:]
-                numContacts = int(contact_content.split(",")[0])
-                for couple in results:
-                    couples.append(couple)
+                atom_name = parts[1]
+                res_full = parts[7]
+                res_name, res_num = res_full[:3], res_full[3:]
+                key = (res_name, res_num)
 
-            # Build the feature matrix as in the featurizer
-            with open(mol2Path, 'r') as complexMOL2:
-                finalCoordinates[idx] = {}
-                for line in complexMOL2.readlines():
-                    if len(line.split()) > 5:
-                        if line.split()[1] in ['N', 'CA', 'CB', 'C', 'O']:
-                            try:
-                                x, y, z, atomType, partialCharge, Resid, Resnum = line.split()[2], line.split()[3], \
-                                    line.split()[4], line.split()[5], line.split()[8], line.split()[7][0:3], \
-                                    line.split()[7][3:]
-                                x, y, z, partialCharge = map(float, [x, y, z, partialCharge])
-                                ResidAndResnum = f"{Resid}{Resnum}"
+                if atom_name in accepted_atoms and key in target_map:
+                    x, y, z = map(float, parts[2:5])
+                    charge = float(parts[8])
+                    atom_type = parts[5]
 
-                                # Create one-hot encodings as in featurizer
-                                atom_type_onehot = np.zeros(len(eleTypes))
-                                residue_onehot = np.zeros(len(amino_acids))
-                                if atomType in eleTypes:
-                                    atom_type_onehot[eleTypes.index(atomType)] = 1.0
-                                if Resid in amino_acids:
-                                    residue_onehot[amino_acids.index(Resid)] = 1.0
+                    # Apply scaling to (x, y, z)
+                    # coords_scaled = feature_scaler.transform([[x, y, z]])[0]
 
-                                # Combine features as in featurizer
-                                full_feature = np.concatenate(
-                                    [[x, y, z, partialCharge], atom_type_onehot, residue_onehot])
+                    # One-hot encoding
+                    atom_type_onehot = np.zeros(len(eleTypes))
+                    if atom_type in eleTypes:
+                        atom_type_onehot[eleTypes.index(atom_type)] = 1.0
 
-                                if ResidAndResnum not in finalCoordinates[idx]:
-                                    finalCoordinates[idx][ResidAndResnum] = []
-                                finalCoordinates[idx][ResidAndResnum].append(full_feature)
+                    residue_onehot = np.zeros(len(amino_acids))
+                    if res_name in amino_acids:
+                        residue_onehot[amino_acids.index(res_name)] = 1.0
 
-                            except IndexError:
-                                print(idx, "HAD AN INDEX OUT OF RANGE IN THE MOL2 FILE.")
+                    # Feature vector
+                    features = np.hstack([x, y, z, charge, atom_type_onehot, residue_onehot])
+                    residue_data[key][atom_name] = features
 
-            residuePairs = []
-            numberOfPairs: int = 5  # Changed from 50 to match the featurizer
-            for pair in couples[:numberOfPairs]:
-                res1, res2 = pair.split("-")[0], pair.split("-")[1]
+        X = len(residue_data)
+        matrix = np.zeros((X, len(accepted_atoms), 34))
 
-                # Get the feature arrays for each residue
-                res1array = np.array(finalCoordinates[idx][res1])
-                res2array = np.array(finalCoordinates[idx][res2])
+        for i, (res_key, atoms) in enumerate(residue_data.items()):
+            for j, atom_name in enumerate(accepted_atoms):
+                if atom_name in atoms:
+                    matrix[i, j] = atoms[atom_name]
 
-                # Pad to ensure 5 atoms per residue (as in featurizer)
-                res1Pad = np.pad(res1array, pad_width=((0, 5 - res1array.shape[0]), (0, 0)),
-                                 mode='constant', constant_values=0)
-                res2Pad = np.pad(res2array, pad_width=((0, 5 - res2array.shape[0]), (0, 0)),
-                                 mode='constant', constant_values=0)
+        return matrix
 
-                # Stack the pairs horizontally
-                stackedCouple = np.hstack([res1Pad, res2Pad])
-                reshaped = stackedCouple.reshape(-1)  # Flatten to 1D array
-                residuePairs.append(reshaped)
+    def SaveResults(save_dir: str, abMatrix_: np.ndarray, agMatrix_: np.ndarray, suffix=""):
+        print(f"Saving abMatrix {abMatrix_.shape} abMatrix{suffix}")
+        np.save(path.join(save_dir, f"abMatrix{suffix}.npy"), abMatrix_)
+        print(f"Saving agMatrix {agMatrix_.shape} agMatrix{suffix}")
+        np.save(path.join(save_dir, f"agMatrix{suffix}.npy"), agMatrix_)
+        print("")
 
-            # Combine all pairs into final matrix
-            if residuePairs:
-                dataMatrix = np.array(residuePairs).reshape(-1)
-                print(f"SHAPE OF {dataMatrix.shape} for {path_}")
+    rec_map = build_residue_map(f'./predictions/{idPath}/rec.mol2')
+    lig_map = build_residue_map(f'./predictions/{idPath}/lig.mol2')
 
-                # Save the matrix without label (since we're predicting)
-                np.save(f"{resultFilePath}/{fileName}.npy", dataMatrix, allow_pickle=True)
-                return dataMatrix
-            else:
-                print(f"No valid residue pairs found for {path_}")
-                return np.array([])
+    abMatrix = process_interface(f'./predictions/{idPath}/interface.mol2', rec_map)
+    agMatrix = process_interface(f'./predictions/{idPath}/interface.mol2', lig_map)
+    SaveResults(f"./predictions/{idPath}", abMatrix, agMatrix, idPath)
 
-        except Exception as e:
-            print(path_, " had incorrect H L chains or contained other errors.")
-            exc_type, exc_obj, exc_tb = sys.exc_info()
-            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-            print(exc_type, fname, exc_tb.tb_lineno)
-            return np.array([])
+    print(f"original abMatrix shape: {abMatrix.shape}")
+    print(f"original agMatrix shape: {agMatrix.shape}")
