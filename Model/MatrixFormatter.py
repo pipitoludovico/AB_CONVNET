@@ -101,10 +101,8 @@ def FormatData():
             gbsa=np.array(gbsa_all, dtype=np.float32)
         )
         print(f"Saved preprocessed data to: {path}")
-    print("Loading data..")
+
     samples_list = LoadData()
-    print("Removing outliers...")
     filtered_samples = remove_outliers_by_label(samples_list, lower_percentile=1, upper_percentile=99)
-    # np.random.shuffle(filtered_samples)  # val loss improves a lot
-    print("Saving padded")
+    np.random.shuffle(filtered_samples)  # val loss improves a lot
     SavePadded(filtered_samples)
