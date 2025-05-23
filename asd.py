@@ -1,63 +1,30 @@
-# import numpy as np
-#
-#
-# _ = np.zeros(shape=(6, 34))
-# _a = np.zeros(shape=(6, 34))
-# for zio in ('rec', 'lig'):
-#     for i in range(6):
-#         rnd = np.random.random(size=(1, 34))
-#         if zio == "rec":
-#             print("zio")
-#             _[i] = rnd
-#         else:
-#             print('lig')
-#             _a[i] = rnd
-#
-# print(_.shape)
-# print(_a.shape)
-# print(_)
-# #
-# # x = 222
-# # _ = [2, 22, 222]
-# # if x in _:
-# #     print(x, _.index(x))
-#
-# #
-# # eleTypes = ['N.3', "N.am", "N.4", 'C.3', 'C.2', 'O.2', 'O.3', 'O.co2']
-# # amino_acids = ["ALA", "ARG", "ASN", "ASP", "CYS", "CYX", "GLN", "GLU", "GLY", "HIS", "HIE",
-# #                "ILE", "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP", "TYR", "VAL"]
-# # accepted_atoms = ['N', 'CA', 'CB', 'C', 'O']
-# #
-# # print(len(eleTypes), len(amino_acids), len(accepted_atoms))
-# #
-# # _ = np.array([1, 2, 3])
-# # x = 99
-# #
-# # a = np.hstack([_, x])
-# # print(a)
-#
-# _ = ['E', 'D', 'A  C', 'protein | peptide']
-# if any(info == "" or info is None for info in _):
-#     print("NO")
+import tensorflow as tf
+from tensorflow.keras import layers, Model
 
 
-# import numpy as np
-#
-# _ = np.array([[1, 2, 3], [4, 5, 6]])
-# padded = np.vstack((_, np.zeros(shape=(3, 3))))
-#
-# _1 = np.array([[1, 2, 3], [4, 5, 6]])
-# padded1 = np.vstack((_, np.zeros(shape=(6, 3))))
-#
-# print(padded.shape, padded1.shape)
-#
-# label = np.array(-45, )
+def Generator(input_shape):
+    inputs = layers.Input(shape=input_shape)  # e.g., (X, 5, 34)
 
-import json
+    # Example: flatten last dims and do some Dense layers
+    x = layers.Flatten()(inputs)  # (batch, X*5*34)
+    x = layers.Dense(512, activation='relu')(x)
+    x = layers.Dense(256, activation='relu')(x)
 
-with open("samples_to_test.json", "r") as jfile:
-    data = json.load(jfile)
+    # Output continuous values for each atom: 5 atoms * 4 floats (x,y,z,q) per atom
+    output_dim = input_shape[1] * input_shape[2] * 4  # X * 5 * 4
+    continuous_output = layers.Dense(output_dim)(x)  # no activation or linear
 
-for entry in data:
-    h, l = entry['H_Chain'], entry['L_Chain']
-    print(h, l)
+    # Reshape to (batch, X, 5, 4)
+    continuous_output = layers.Reshape((input_shape[1], input_shape[2], 4))(continuous_output)
+
+    return Model(inputs=inputs, outputs=continuous_output)
+
+
+# Usage:
+input_shape = (10, 5, 34)  # example
+model = Generator(input_shape)
+
+dummy_input = tf.random.normal((1,) + input_shape)
+continuous_out = model(dummy_input)
+print("Output shape:", continuous_out.shape)  # (1, 10, 5, 4)
+print(continuous_out)

@@ -1,5 +1,5 @@
 import tensorflow as tf
-from keras import layers, Model, Input
+from keras import layers, Model
 
 
 class CNNConditionalGenerator(Model):

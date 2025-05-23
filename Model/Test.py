@@ -52,7 +52,7 @@ def Test(args):
 
     print("\nPredictions:")
     print("-" * 80)
-    print(f"{'Sample':<25} {'Predicted GBSA':<20} {'Pre-scaled':<20}")
+    print(f"{'Sample':<25} {'Predicted GBSA':<20} {'Predicted Validity':<20}")
     print("-" * 80)
 
     base_dir = './predictions'
@@ -91,9 +91,22 @@ def Test(args):
 
             # Predict
             preds = model.predict([ab_scaled, ag_scaled], verbose=0)
-            gbsa_pred = label_scaler.inverse_transform(preds)[0, 0]
 
-            print(f"{sample_name:<25} {gbsa_pred:<20.4f} {gbsa_pred.flatten()[0]:<20.4f}")
+            # Expecting [gbsa_pred_scaled, validity] or vice versa
+            if isinstance(preds, (list, tuple)) and len(preds) == 2:
+                gbsa_pred_scaled, validity = preds
+            else:
+                raise ValueError("Unexpected model output format.")
+
+            # Reshape if needed
+            if gbsa_pred_scaled.ndim > 2:
+                gbsa_pred_scaled = gbsa_pred_scaled.reshape(gbsa_pred_scaled.shape[0], -1)
+
+            # Inverse transform
+            gbsa_pred = label_scaler.inverse_transform(gbsa_pred_scaled)[0, 0]
+            validity_score = float(validity.flatten()[0])  # Assuming single sample
+
+            print(f"{sample_name:<25} {gbsa_pred:<20.4f} {validity_score:<20.4f}")
 
         except Exception as e:
             print(f"Error with sample '{sample_name}': {e}")

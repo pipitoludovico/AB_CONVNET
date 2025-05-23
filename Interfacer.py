@@ -2,11 +2,11 @@ from include.Amberizer.DbManager import DatabaseManager
 from include.Amberizer.TrajectoryMaker import TrajectoryMaker
 from include.Featurizer.FeatureMaker import ParallelFeaturize
 from include.Interfacer.PeStO import ParallelPesto
-from Model.MatrixFormatter import *
-from Model.Train import *
-from Model.Sampler import *
+from Model.MatrixFormatter import FormatData
+from Model.DiscriminatorTraining import Train
+from Model.Sampler import Sampler
 from Model.Test import *
-from Model.GAN import TrainAndGenerate
+# from Model.cGAN_Training import TrainAndGenerate
 from warnings import filterwarnings
 from include.CLIparser.CLIparser import ParseCLI
 
@@ -39,8 +39,8 @@ def main():
         Test(args=args)
     if args['test2']:
         Test2(args=args)
-    if args['gan']:
-        TrainAndGenerate(args=args)
+    # if args['gan']:
+    #     TrainAndGenerate(args=args)
 
 
 if __name__ == '__main__':
