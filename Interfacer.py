@@ -6,7 +6,7 @@ from Model.MatrixFormatter import FormatData
 from Model.DiscriminatorTraining import Train
 from Model.Sampler import Sampler
 from Model.Test import *
-# from Model.cGAN_Training import TrainAndGenerate
+from Model.cGAN_Training import TrainAndGenerate
 from warnings import filterwarnings
 from include.CLIparser.CLIparser import ParseCLI
 
@@ -39,8 +39,8 @@ def main():
         Test(args=args)
     if args['test2']:
         Test2(args=args)
-    # if args['gan']:
-    #     TrainAndGenerate(args=args)
+    if args['gan']:
+        TrainAndGenerate(pretrained_discriminator_model_path=args['model'])
 
 
 if __name__ == '__main__':

@@ -1,67 +1,77 @@
-import numpy as np
-import os
+import tensorflow as tf
+from tensorflow.keras import layers, Model
+import tensorflow.keras.backend as K
 
+accepted_atoms = ['N', 'CA', 'CB', 'C', 'O']
 eleTypes = ['N.3', "N.am", "N.4", 'C.3', 'C.2', 'O.2', 'O.3', 'O.co2']
 amino_acids = ["ALA", "ARG", "ASN", "ASP", "CYS", "CYX", "GLN", "GLU", "GLY", "HIS", "HIE",
                "ILE", "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP", "TYR", "VAL"]
-accepted_atoms = ['N', 'CA', 'CB', 'C', 'O']
 
+def sample_gumbel(shape, eps=1e-20):
+    """ Sample from Gumbel(0,1) """
+    U = tf.random.uniform(shape, minval=0, maxval=1)
+    return -tf.math.log(-tf.math.log(U + eps) + eps)
 
-def decode_matrix_to_mol2(matrix: np.ndarray, output_dir: str, mol2_prefix="decoded"):
+def gumbel_softmax_sample(logits, temperature):
+    """ Draw a sample from the Gumbel-Softmax distribution """
+    y = logits + sample_gumbel(tf.shape(logits))
+    return tf.nn.softmax(y / temperature)
+
+def gumbel_softmax(logits, temperature=0.5):
     """
-    Decode a batch of matrices into individual mol2 files.
+    ST Gumbel-Softmax:
+    logits: [batch_size, ..., n_class]
+    Returns differentiable approximation of one-hot vectors.
     """
-    print("Matrix shape:", matrix.shape)
-    os.makedirs(output_dir, exist_ok=True)
+    y = gumbel_softmax_sample(logits, temperature)
+    y_hard = tf.cast(tf.equal(y, tf.reduce_max(y, axis=-1, keepdims=True)), y.dtype)
+    # Straight-through estimator
+    y = tf.stop_gradient(y_hard - y) + y
+    return y
 
-    num_samples = matrix.shape[0]
+def Generator(max_ab_len=92, max_ag_len=97, temperature=0.5):
+    features_coords = 4
+    features_ele = len(eleTypes)  # 8
+    features_res = len(amino_acids)  # 22
 
-    for sample_idx in range(num_samples):
-        sample = matrix[sample_idx]  # shape (97, 5, 34)
-        print(sample)
-        atom_lines = []
-        atom_id = 1
-        res_id = 1
+    ag_input = layers.Input(shape=(max_ag_len, 5, features_coords + features_ele + features_res), name='ag_input')
 
-        for residue in sample:
-            # Determine residue name
-            for i, aa in enumerate(amino_acids):
-                # Check if this residue was labeled as amino_acid[i]
-                residue_onehot_sum = np.sum(residue[:, 12 + i])  # residue type starts at index 12
-                if residue_onehot_sum > 0.5:
-                    res_name = aa
-                    break
-            else:
-                res_name = "UNK"
+    x = layers.Reshape((max_ag_len * 5, features_coords + features_ele + features_res))(ag_input)
+    x = layers.Dense(512, activation='relu')(x)
+    x = layers.Dense(1024, activation='relu')(x)
+    x = layers.GlobalAveragePooling1D()(x)
 
-            for atom_idx, atom_data in enumerate(residue):
-                x, y, z = atom_data[0:3]
-                charge = atom_data[3]
+    coords = layers.Dense(max_ab_len * 5 * features_coords, activation='linear')(x)
+    coords = layers.Reshape((max_ab_len, 5, features_coords), name='coords')(coords)
 
-                atom_type_index = np.argmax(atom_data[4:12])
-                atom_type = eleTypes[atom_type_index]
+    ele_logits = layers.Dense(max_ab_len * 5 * features_ele)(x)
+    ele_logits = layers.Reshape((max_ab_len, 5, features_ele))(ele_logits)
 
-                atom_name = accepted_atoms[atom_idx]
+    res_logits = layers.Dense(max_ab_len * 5 * features_res)(x)
+    res_logits = layers.Reshape((max_ab_len, 5, features_res))(res_logits)
 
-                line = f"{atom_id:7d} {atom_name:<4} {x:9.4f} {y:9.4f} {z:9.4f} {atom_type:<5} {res_name}{res_id:>4} {res_name} {charge: .4f}"
-                atom_lines.append(line)
-                atom_id += 1
-            res_id += 1
+    # Usa Lambda per applicare Gumbel-Softmax che è una operazione personalizzata
+    ele = layers.Lambda(lambda l: gumbel_softmax(l, temperature), name='ele_gumbel_softmax')(ele_logits)
+    res = layers.Lambda(lambda l: gumbel_softmax(l, temperature), name='res_gumbel_softmax')(res_logits)
 
-        mol2_content = "@<TRIPOS>MOLECULE\n"
-        mol2_content += f"{mol2_prefix}_{sample_idx}\n"
-        mol2_content += f"{len(atom_lines)} 0 0 0 0\n"
-        mol2_content += "SMALL\nNO_CHARGES\n\n"
-        mol2_content += "@<TRIPOS>ATOM\n"
-        mol2_content += "\n".join(atom_lines)
-        mol2_content += "\n@<TRIPOS>BOND\n"
+    output = layers.Concatenate(axis=-1)([coords, ele, res])
 
-        file_path = os.path.join(output_dir, f"{mol2_prefix}_{sample_idx}.mol2")
-        with open(file_path, "w") as f:
-            f.write(mol2_content)
-        print(f"Written {file_path}")
+    return Model(inputs=ag_input, outputs=output, name='Generator')
 
 
-# Load and decode
-ag = np.load('../generated_ag.npy')  # shape (10, 97, 5, 34)
-decode_matrix_to_mol2(ag, output_dir="../decoded_mol2s", mol2_prefix="ab_generated")
+# Test
+max_ab_len = 92
+max_ag_len = 97
+model = Generator(max_ab_len=max_ab_len, max_ag_len=max_ag_len, temperature=0.5)
+
+batch_size = 1
+input_shape = (max_ag_len, 5, 4 + len(eleTypes) + len(amino_acids))
+dummy_input = tf.random.normal((batch_size,) + input_shape)
+output = model(dummy_input)
+
+print("Output shape:", output.shape)
+print("Example coords output (first residue, first atom):", output[0, 0, 0, :4].numpy())
+print("Sum of ele_gumbel_softmax (should be 1):", tf.reduce_sum(output[0, 0, 0, 4:12]).numpy())
+print("Sum of res_gumbel_softmax (should be 1):", tf.reduce_sum(output[0, 0, 0, 12:]).numpy())
+print("Ele Gumbel sample argmax:", tf.argmax(output[0, 0, 0, 4:12]).numpy())
+print("Res Gumbel sample argmax:", tf.argmax(output[0, 0, 0, 12:]).numpy())
