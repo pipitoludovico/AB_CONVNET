@@ -138,7 +138,7 @@ class FeaturizerClass:
                     if atom_name in accepted_atoms and key in target_map:
                         x, y, z = map(float, parts[2:5])
                         atom_type = parts[5]
-                        charge = float(parts[8])
+                        # charge = float(parts[8])
 
                         atom_type_onehot = np.zeros(len(eleTypes))
                         if atom_type in eleTypes:
@@ -148,12 +148,16 @@ class FeaturizerClass:
                         if res_name in amino_acids:
                             residue_onehot[amino_acids.index(res_name)] = 1.0
 
-                        features = np.hstack([x, y, z, charge, atom_type_onehot, residue_onehot])
+                        atom_name_onehot = np.zeros(len(accepted_atoms))
+                        atom_name_onehot[accepted_atoms.index(atom_name)] = 1.0
+
+                        # features = np.hstack([x, y, z, charge, atom_type_onehot, residue_onehot])
+                        features = np.hstack([x, y, z, atom_name_onehot, residue_onehot])
                         residue_data[key][atom_name] = features
 
             # Converto ad array su quanti residui ci sono
             X = len(residue_data)
-            matrix = np.zeros((X, len(accepted_atoms), 34))
+            matrix = np.zeros((X, len(accepted_atoms), (3 + len(atom_name_onehot) + len(residue_onehot))))
 
             for i, (res_key, atoms) in enumerate(residue_data.items()):
                 for j, atom_name in enumerate(accepted_atoms):

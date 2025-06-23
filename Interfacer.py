@@ -7,6 +7,7 @@ from Model.DiscriminatorTraining import Train
 from Model.Sampler import Sampler
 from Model.Test import *
 from Model.cGAN_Training import TrainAndGenerate
+# from Model.Decoder import generate_pdb_from_model
 from warnings import filterwarnings
 from include.CLIparser.CLIparser import ParseCLI
 
@@ -26,7 +27,7 @@ def main():
         dbDict = dbManager.CopyFilesFromFolderToTarget(copy_=False)
         TrajMaker = TrajectoryMaker(dbDict)
         TrajMaker.ParallelPipeline()
-        ParallelPesto(dbDict, root)
+        # ParallelPesto(dbDict, root)
         ParallelFeaturize(dbDict, root)
     if args['format']:
         FormatData()
@@ -41,6 +42,8 @@ def main():
         Test2(args=args)
     if args['gan']:
         TrainAndGenerate(pretrained_discriminator_model_path=args['model'])
+    # if args['generate']:
+    #     generate_pdb_from_model()
 
 
 if __name__ == '__main__':

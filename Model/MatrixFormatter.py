@@ -8,7 +8,7 @@ def FormatData():
         pad_len = target_residues - mat.shape[0]
         if pad_len <= 0:
             return mat
-        padding = np.zeros((pad_len, 5, 34), dtype=mat.dtype)
+        padding = np.zeros((pad_len, 5, 30), dtype=mat.dtype)
         return np.vstack([mat, padding])
 
     def load_pad_config():
@@ -32,6 +32,7 @@ def FormatData():
                     continue
 
                 for file in os.listdir(saved_results_path):
+                    print(f"Doing {saved_results_path}")
                     file_path = os.path.join(saved_results_path, file)
                     if file.endswith(".npy"):
                         try:
@@ -42,6 +43,8 @@ def FormatData():
                                 max_ag_len = max(max_ag_len, data.shape[0])
                         except Exception as e:
                             print(f"Failed to load {file_path}: {e}")
+                del data
+                print(f"Max yet {max_ag_len} {max_ab_len}")
             with open("matrices/pad_config.json", "w") as f:
                 json.dump({"max_ab_len": max_ab_len, "max_ag_len": max_ag_len}, f)
         else:

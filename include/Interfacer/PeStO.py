@@ -6,11 +6,14 @@ from multiprocessing import Pool
 
 def RunPesto(pdb, root) -> None:
     if not os.path.exists("./selected/" + pdb + "/patches/selection_i0.pdb"):
-        chdir("selected/" + pdb)
-        os.makedirs("patches", exist_ok=True)
-        if os.path.exists('complex_minimized_chains.pdb'):
-            run(f'cp complex_minimized_chains.pdb ./patches/selection.pdb', shell=True)
-            run(f"python /home/scratch/software/ludovico/PeSTo/apply_model.py ./patches > logs/pesto.log 2>&1", shell=True)
+        try:
+            chdir("selected/" + pdb)
+            os.makedirs("patches", exist_ok=True)
+            if os.path.exists('complex_minimized_chains.pdb'):
+                run(f'cp complex_minimized_chains.pdb ./patches/selection.pdb', shell=True)
+                run(f"python /home/scratch/software/ludovico/PeSTo/apply_model.py ./patches > logs/pesto.log 2>&1", shell=True)
+        except:
+            print("")
     chdir(root)
 
 

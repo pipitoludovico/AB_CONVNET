@@ -1,8 +1,7 @@
 from keras.models import load_model
 from keras.optimizers import Adam
-from keras.callbacks import ModelCheckpoint
 from Model.Models import Discriminator
-from Model.CallBacks import lr_reduction, early_stopping
+from Model.CallBacks import lr_reduction, early_stopping, checkpoint
 import joblib
 
 import os
@@ -27,6 +26,7 @@ def Train(args):
         data = np.load("./matrices/padded_dataset.npz", allow_pickle=True)
         ab = data['ab']
         ag = data['ag']
+
         gbsa = data['gbsa'].reshape(-1, 1)
 
         continuous_idx = slice(0, 3)
@@ -39,6 +39,9 @@ def Train(args):
 
         ab[..., continuous_idx] = ab_scaled
         ag[..., continuous_idx] = ag_scaled
+
+        ab = np.expand_dims(ab, axis=3)  # from (batch, 92, 5, 34) -> (batch, 92, 5, 1, 34)
+        ag = np.expand_dims(ag, axis=3)  # same for ag
 
         print(f"ab shape: {ab.shape}")
         print(f"ag shape: {ag.shape}")
@@ -110,11 +113,14 @@ def Train(args):
         print("Calling the dataset")
         validity_labels = np.ones_like(gbsa_scaled)
 
+        ab = np.expand_dims(ab, axis=3)  # from (batch, 92, 5, 34) -> (batch, 92, 5, 1, 34)
+        ag = np.expand_dims(ag, axis=3)  # same for ag
+
         dataset = tf.data.Dataset.from_tensor_slices((
             {'ab_input': ab, 'ag_input': ag},
             {'gbsa_prediction': gbsa_scaled, 'validity': validity_labels}
         ))
-        val_size = int(0.1 * len(gbsa_scaled))
+        val_size = int(0.2 * len(gbsa_scaled))
         val_dataset = dataset.take(val_size).batch(args['batch']).prefetch(tf.data.AUTOTUNE)
         train_dataset = dataset.skip(val_size).batch(args['batch']).prefetch(tf.data.AUTOTUNE)
 
@@ -133,38 +139,12 @@ def Train(args):
             }
         )
 
-        best_ckpt = ModelCheckpoint(
-            filepath='best_model.keras',
-            monitor='val_loss',
-            save_best_only=True,
-            save_weights_only=False,
-            verbose=1
-        )
-
-        y_real = {
-            "gbsa_prediction": gbsa_scaled,
-            "validity": np.ones_like(gbsa_scaled),
-        }
-        sample_weights_real = {
-            "gbsa_prediction": np.ones_like(gbsa_scaled).flatten(),  # count toward loss
-            "validity": np.ones_like(gbsa_scaled).flatten(),
-        }
-
-        y_fake = {
-            "gbsa_prediction": np.zeros_like(gbsa_scaled),  # dummy
-            "validity": np.zeros_like(gbsa_scaled),  # label as fake
-        }
-        sample_weights_fake = {
-            "gbsa_prediction": np.zeros_like(gbsa_scaled).flatten(),  # ignore loss
-            "validity": np.ones_like(gbsa_scaled).flatten(),
-        }
-
         print("Training begins")
-        history = model.fit(
+        model.fit(
             train_dataset,
             validation_data=val_dataset,
             epochs=args['epoch'],
-            callbacks=[best_ckpt, early_stopping, lr_reduction],
+            callbacks=[checkpoint, early_stopping, lr_reduction],
             verbose=1,
         )
 

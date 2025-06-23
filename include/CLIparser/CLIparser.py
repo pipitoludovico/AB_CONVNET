@@ -51,6 +51,8 @@ def ParseCLI():
     ap.add_argument('-format', required=False, action='store_true', help="format data and removes quartiles 15-85")
     ap.add_argument('-model', required=False, type=str, help="specify the file path with the keras model")
     ap.add_argument('-name', required=False, type=str, default='default', help="names the model's file name")
+
+    ap.add_argument('-generate', required=False, action='store_true')
     ap.add_argument("-k", '--kill', required=False, action='store_true', default=False,
                     help="Kills the PID in case of need.")
     args = ap.parse_args()

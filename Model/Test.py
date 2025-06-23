@@ -79,6 +79,9 @@ def Test(args):
             ab = pad_matrix(ab, MAX_AB_LEN)
             ag = pad_matrix(ag, MAX_AG_LEN)
 
+            ab = np.expand_dims(ab, axis=2)  # from (batch, 92, 5, 34) -> (batch, 92, 5, 1, 34)
+            ag = np.expand_dims(ag, axis=2)  # same for ag
+
             # Flatten and scale x, y, z features
             ab_flat = ab.reshape(-1, ab.shape[-1])
             ag_flat = ag.reshape(-1, ag.shape[-1])
