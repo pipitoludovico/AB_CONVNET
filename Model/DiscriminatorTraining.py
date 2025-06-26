@@ -40,8 +40,8 @@ def Train(args):
         ab[..., continuous_idx] = ab_scaled
         ag[..., continuous_idx] = ag_scaled
 
-        ab = np.expand_dims(ab, axis=3)  # from (batch, 92, 5, 34) -> (batch, 92, 5, 1, 34)
-        ag = np.expand_dims(ag, axis=3)  # same for ag
+        # ab = np.expand_dims(ab, axis=3)  # from (batch, 92, 5, 34) -> (batch, 92, 5, 1, 34)
+        # ag = np.expand_dims(ag, axis=3)  # same for ag
 
         print(f"ab shape: {ab.shape}")
         print(f"ag shape: {ag.shape}")
@@ -113,8 +113,8 @@ def Train(args):
         print("Calling the dataset")
         validity_labels = np.ones_like(gbsa_scaled)
 
-        ab = np.expand_dims(ab, axis=3)  # from (batch, 92, 5, 34) -> (batch, 92, 5, 1, 34)
-        ag = np.expand_dims(ag, axis=3)  # same for ag
+        # ab = np.expand_dims(ab, axis=3)  # from (batch, 92, 5, 34) -> (batch, 92, 5, 1, 34)
+        # ag = np.expand_dims(ag, axis=3)  # same for ag
 
         dataset = tf.data.Dataset.from_tensor_slices((
             {'ab_input': ab, 'ag_input': ag},
@@ -125,7 +125,7 @@ def Train(args):
         train_dataset = dataset.skip(val_size).batch(args['batch']).prefetch(tf.data.AUTOTUNE)
 
         print("Compiling the model...")
-        model = Discriminator(ab_shape=ab.shape[1:], ag_shape=ag.shape[1:])
+        model = Discriminator()
         optimizer = Adam(learning_rate=args["lr"])
         model.compile(
             optimizer=optimizer,
@@ -138,7 +138,6 @@ def Train(args):
                 'validity': ['accuracy']
             }
         )
-
         print("Training begins")
         model.fit(
             train_dataset,

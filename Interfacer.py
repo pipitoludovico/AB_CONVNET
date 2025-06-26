@@ -1,12 +1,12 @@
 from include.Amberizer.DbManager import DatabaseManager
 from include.Amberizer.TrajectoryMaker import TrajectoryMaker
 from include.Featurizer.FeatureMaker import ParallelFeaturize
-from include.Interfacer.PeStO import ParallelPesto
+# from include.Interfacer.PeStO import ParallelPesto
 from Model.MatrixFormatter import FormatData
 from Model.DiscriminatorTraining import Train
 from Model.Sampler import Sampler
 from Model.Test import *
-from Model.cGAN_Training import TrainAndGenerate
+from Model.cGAN_trainer import TrainAndGenerate
 # from Model.Decoder import generate_pdb_from_model
 from warnings import filterwarnings
 from include.CLIparser.CLIparser import ParseCLI

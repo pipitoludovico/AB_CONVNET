@@ -40,11 +40,7 @@ def Test(args):
     # Load the model
     try:
         model = load_model(args['model'], compile=False)
-        model.compile(
-            optimizer=Adam(learning_rate=args['lr']),
-            loss={'validity': 'binary_crossentropy', 'gbsa_pred': Huber()},
-            loss_weights={'validity': 1.0, 'gbsa_pred': 1.0}
-        )
+        model.compile()
         print("Model loaded and compiled.")
     except Exception as e:
         print(f"Model loading error: {e}")
