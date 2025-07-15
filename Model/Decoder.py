@@ -279,17 +279,12 @@ class AntibodyMutator:
         ab_batch = np.expand_dims(ab_matrix, axis=0)
         ag_batch = np.expand_dims(ag_matrix, axis=0)
 
-        # Generate mutated antibody
-        batch_size = tf.shape(ab_batch)[0]
-        z = tf.random.normal(shape=(batch_size, 128), dtype=ab_batch.dtype)
-
-        mutated_ab = self.model.predict([ab_batch, ag_batch, z], verbose=1)
+        mutated_ab = self.model.predict([ab_batch, ag_batch], verbose=1)
 
         # Remove batch dimension
         return mutated_ab[0]
 
-    def _decode_matrix_to_pdb(self, matrix: np.ndarray, chain_id: str, output_path: str,
-                              original_pdb_path: str = None):
+    def _decode_matrix_to_pdb(self, matrix: np.ndarray, chain_id: str, output_path: str):
         """
         Decode a matrix back to PDB format.
 
@@ -297,7 +292,6 @@ class AntibodyMutator:
             matrix: Matrix to decode (shape: max_length, 5, features)
             chain_id: Chain identifier for the PDB
             output_path: Path to save the PDB file
-            original_pdb_path: Optional path to original PDB for template info
         """
         pdb_lines = []
         atom_counter = 1
@@ -486,19 +480,16 @@ class AntibodyMutator:
                 self._decode_matrix_to_pdb(
                     ab_matrix, "H",
                     f"{output_dir}/{pdb_id}/original_antibody.pdb",
-                    pdb_path
                 )
 
                 self._decode_matrix_to_pdb(
                     mutated_ab, "H",
                     f"{output_dir}/{pdb_id}/mutated_antibody.pdb",
-                    pdb_path
                 )
 
                 self._decode_matrix_to_pdb(
                     ag_matrix, "A",
                     f"{output_dir}/{pdb_id}/antigen.pdb",
-                    pdb_path
                 )
 
             print(f"Mutation completed for {pdb_id}")
@@ -530,7 +521,6 @@ class AntibodyMutator:
                     print(f"Successfully mutated {pdb_file}")
                 else:
                     print(f"Failed to mutate {pdb_file}: {result['error']}")
-
 
     def quick_test_context_sensitivity(self):
         """Test rapido per verificare context-sensitivity"""

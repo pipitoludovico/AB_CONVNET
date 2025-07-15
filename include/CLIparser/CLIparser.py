@@ -9,14 +9,16 @@ def dir_path(string):
     if path.isdir(string):
         return string
     else:
-        raise NotADirectoryError(string)
+        print(f"No directory called {string} found.")
+        exit()
 
 
 def check_existence(string):
     if path.exists(string):
         return string
     else:
-        raise FileNotFoundError(string)
+        print(f"File {string} not found.")
+        exit()
 
 
 def file_path(string):
@@ -49,10 +51,10 @@ def ParseCLI():
     ap.add_argument('-gan', required=False, action='store_true', help="Tries to train the GAN")
 
     ap.add_argument('-format', required=False, action='store_true', help="format data and removes quartiles 15-85")
-    ap.add_argument('-model', required=False, type=str, help="specify the file path with the keras model")
+    ap.add_argument('-model', required=False, type=file_path, help="specify the file path with the keras model")
     ap.add_argument('-name', required=False, type=str, default='default', help="names the model's file name")
 
-    ap.add_argument('-generate', required=False, action='store_true')
+    ap.add_argument('-generate', required=False, type=dir_path, help="sets the path with the complexes to be mutated")
     ap.add_argument("-k", '--kill', required=False, action='store_true', default=False,
                     help="Kills the PID in case of need.")
     args = ap.parse_args()

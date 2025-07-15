@@ -191,7 +191,7 @@ def TrainAndGenerate(pretrained_discriminator_model_path=None,
             logs = gan.train_step(data_batch)
 
             # Print current step logs (if you want more frequent updates)
-            if step % 10 == 0:
+            if step % 100 == 0:
                 print(f"Step {step}: "
                       f"d_loss={logs['d_loss']:.4f} "
                       f"g_loss={logs['g_loss']:.4f} "

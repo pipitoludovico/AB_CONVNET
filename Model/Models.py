@@ -1,6 +1,10 @@
 from keras import layers, Input, Model
 import numpy as np
-import tensorflow as tf
+from .Custom_Layers import (
+    CoordinateExtractor, AtomExtractor, CoordinateSum, PaddingMask,
+    MaskSqueezer, LogitsMasker, GumbelSoftmax, ResidueExpander,
+    ResidueTiler, MaskTiler
+)
 
 
 def Discriminator(atoms_per_res=5, feature_dim=30):
@@ -59,8 +63,7 @@ def Discriminator(atoms_per_res=5, feature_dim=30):
     return Model(inputs=[ab_input, ag_input], outputs=[gbsa_output, validity_output])
 
 
-def Generator(atoms_per_res=5, feature_dim=30, ab_max_len=92, ag_max_len=97,
-              mutation_strength=0.1, temperature=1.0, hard_gumbel=True):
+def Generator(atoms_per_res=5, feature_dim=30, ab_max_len=92, ag_max_len=97, temperature=1.0, hard_gumbel=False):
     """
     Generator that learns to mutate antibody residue types to improve GBSA.
     Handles 0-padded sequences using Masking layers.
@@ -105,75 +108,31 @@ def Generator(atoms_per_res=5, feature_dim=30, ab_max_len=92, ag_max_len=97,
     # Reshape to (batch, residues, 22)
     residue_logits = layers.Reshape((ab_max_len, 22))(residue_logits_flat)
 
-    # Separate the original features
-    ab_coords = layers.Lambda(lambda x: x[..., :3], dtype=tf.float32)(ab_input)  # (batch, ab_len, atoms, 3)
-    ab_atoms = layers.Lambda(lambda x: x[..., 3:8], dtype=tf.float32)(ab_input)  # (batch, ab_len, atoms, 5)
+    # Separate the original features using custom layers
+    ab_coords = CoordinateExtractor()(ab_input)  # (batch, ab_len, atoms, 3)
+    ab_atoms = AtomExtractor()(ab_input)  # (batch, ab_len, atoms, 5)
 
     # Create mask for padded positions based on coordinates
-    coord_sum = layers.Lambda(lambda x: tf.reduce_sum(tf.abs(x), axis=[2, 3], keepdims=True),
-                              output_shape=(ab_max_len, 1, 1), dtype=tf.float32)(ab_coords)
+    coord_sum = CoordinateSum()(ab_coords)
 
-    padding_mask = layers.Lambda(
-        lambda x: tf.cast(x > 0.0, tf.float32),
-        output_shape=(ab_max_len, 1, 1),
-        dtype=tf.float32
-    )(coord_sum)
+    padding_mask = PaddingMask()(coord_sum)
 
     # Squeeze mask to (batch, residues, 1) for broadcasting with logits
-    padding_mask_2d = layers.Lambda(
-        lambda x: tf.squeeze(x, axis=2),
-        output_shape=(ab_max_len, 1),
-        dtype=tf.float32
-    )(padding_mask)
+    padding_mask_2d = MaskSqueezer()(padding_mask)
 
     # Apply mask to logits (set padded positions to very negative values)
-    masked_logits = layers.Lambda(
-        lambda inputs: inputs[0] + (1.0 - inputs[1]) * (-1e9),
-        dtype=tf.float32
-    )([residue_logits, padding_mask_2d])
-
-    # Gumbel-Softmax for differentiable categorical sampling
-    def gumbel_softmax(logits, temperature=1.0, hard=False):
-        """Gumbel-Softmax sampling"""
-        # Sample Gumbel noise
-        gumbel_noise = -tf.math.log(-tf.math.log(tf.random.uniform(tf.shape(logits), 1e-20, 1.0)))
-
-        # Add noise to logits and apply softmax with temperature
-        y_soft = tf.nn.softmax((logits + gumbel_noise) / temperature)
-
-        if hard:
-            # Straight-through estimator: hard one-hot in forward, soft in backward
-            y_hard = tf.one_hot(tf.argmax(y_soft, axis=-1), depth=tf.shape(logits)[-1])
-            y_soft = tf.stop_gradient(y_hard - y_soft) + y_soft
-
-        return y_soft
+    masked_logits = LogitsMasker()([residue_logits, padding_mask_2d])
 
     # Apply Gumbel-Softmax
-    residue_probs = layers.Lambda(
-        lambda x: gumbel_softmax(x, temperature=temperature, hard=hard_gumbel),
-        output_shape=(ab_max_len, 22),
-        dtype=tf.float32
-    )(masked_logits)
+    residue_probs = GumbelSoftmax(temperature=temperature, hard=hard_gumbel)(masked_logits)
 
     # Expand to all atoms in each residue (consistent across atoms)
-    mutated_residues_per_atom = layers.Lambda(
-        lambda x: tf.expand_dims(x, axis=2),
-        output_shape=(ab_max_len, 1, 22),
-        dtype=tf.float32
-    )(residue_probs)
+    mutated_residues_per_atom = ResidueExpander()(residue_probs)
 
-    mutated_residues = layers.Lambda(
-        lambda x: tf.tile(x, [1, 1, atoms_per_res, 1]),
-        output_shape=(ab_max_len, atoms_per_res, 22),
-        dtype=tf.float32
-    )(mutated_residues_per_atom)
+    mutated_residues = ResidueTiler(atoms_per_res=atoms_per_res)(mutated_residues_per_atom)
 
     # Expand mask to match residue features shape
-    residue_mask = layers.Lambda(
-        lambda x: tf.tile(x, [1, 1, atoms_per_res, 22]),
-        output_shape=(ab_max_len, atoms_per_res, 22),
-        dtype=tf.float32
-    )(padding_mask)
+    residue_mask = MaskTiler(atoms_per_res=atoms_per_res, num_residue_types=22)(padding_mask)
 
     # Apply mask to residues (zero out padded positions)
     mutated_residues_masked = layers.Multiply()([mutated_residues, residue_mask])

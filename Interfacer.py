@@ -7,7 +7,7 @@ from Model.DiscriminatorTraining import Train
 from Model.Sampler import Sampler
 from Model.Test import *
 from Model.cGAN_trainer import TrainAndGenerate
-# from Model.Decoder import generate_pdb_from_model
+from Model.Decoder import AntibodyMutator
 from warnings import filterwarnings
 from include.CLIparser.CLIparser import ParseCLI
 
@@ -41,9 +41,15 @@ def main():
     if args['test2']:
         Test2(args=args)
     if args['gan']:
-        TrainAndGenerate(pretrained_discriminator_model_path=args['model'])
-    # if args['generate']:
-    #     generate_pdb_from_model()
+        TrainAndGenerate(pretrained_discriminator_model_path=args['model'], epochs=args['epoch'])
+    if args['generate']:
+        mutator = AntibodyMutator(
+            model_path=args.get('model', None),
+            complex_folder=args.get('generate', None),
+            scaler_path="./feature_scaler.pkl"
+        )
+
+        mutator.mutate_all_complexes(save_pdbs=True, save_matrices=False)
 
 
 if __name__ == '__main__':
