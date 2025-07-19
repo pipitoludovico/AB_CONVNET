@@ -21,18 +21,49 @@ def TrainAndGenerate(pretrained_discriminator_model_path=None,
     ab = data['ab']  # shape (batch, 92, 5, 30)
     ag = data['ag']  # shape (batch, 97, 5, 30)
     gbsa = data['gbsa'].reshape(-1, 1)
+    print("PRE SCALING")
+    print(ab[0][-1])
 
-    # Scale only x, y, z coordinates
+    # Create masks for non-padded positions BEFORE scaling
+    # A position is considered padded if ALL features are zero
+    ab_mask = np.sum(np.abs(ab), axis=-1) > 0  # shape (batch, 92, 5)
+    ag_mask = np.sum(np.abs(ag), axis=-1) > 0  # shape (batch, 97, 5)
+
+    # Scale only x, y, z coordinates, but only for NON-PADDED positions
     continuous_idx = slice(0, 3)
-    ab_cont = ab[..., continuous_idx].reshape(-1, 3)
-    ag_cont = ag[..., continuous_idx].reshape(-1, 3)
 
+    # Extract coordinates from non-padded positions only
+    ab_coords_nonpadded = ab[..., continuous_idx][ab_mask]  # 1D array of valid coordinates
+    ag_coords_nonpadded = ag[..., continuous_idx][ag_mask]  # 1D array of valid coordinates
+
+    # Fit scaler only on valid (non-padded) coordinates
     feature_scaler = StandardScaler()
-    feature_scaler.fit(np.vstack([ab_cont, ag_cont]))
+    all_valid_coords = np.vstack([ab_coords_nonpadded, ag_coords_nonpadded])
+    feature_scaler.fit(all_valid_coords)
 
-    ab[..., continuous_idx] = feature_scaler.transform(ab_cont).reshape(ab.shape[0], ab.shape[1], ab.shape[2], 3)
-    ag[..., continuous_idx] = feature_scaler.transform(ag_cont).reshape(ag.shape[0], ag.shape[1], ag.shape[2], 3)
+    # Apply scaling only to non-padded positions
+    # Create copies to avoid modifying original data
+    ab_scaled = ab.copy()
+    ag_scaled = ag.copy()
 
+    # Scale AB coordinates
+    ab_coords_flat = ab[..., continuous_idx].reshape(-1, 3)
+    ab_mask_flat = ab_mask.reshape(-1)
+    ab_coords_flat[ab_mask_flat] = feature_scaler.transform(ab_coords_flat[ab_mask_flat])
+    ab_scaled[..., continuous_idx] = ab_coords_flat.reshape(ab.shape[0], ab.shape[1], ab.shape[2], 3)
+
+    # Scale AG coordinates
+    ag_coords_flat = ag[..., continuous_idx].reshape(-1, 3)
+    ag_mask_flat = ag_mask.reshape(-1)
+    ag_coords_flat[ag_mask_flat] = feature_scaler.transform(ag_coords_flat[ag_mask_flat])
+    ag_scaled[..., continuous_idx] = ag_coords_flat.reshape(ag.shape[0], ag.shape[1], ag.shape[2], 3)
+
+    # Update ab and ag with scaled versions
+    ab = ab_scaled
+    ag = ag_scaled
+
+    print("AFTER SCALING")
+    print(ab[0][-1])
     label_scaler = StandardScaler()
     gbsa_scaled = label_scaler.fit_transform(gbsa)
 

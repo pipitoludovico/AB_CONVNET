@@ -4,7 +4,8 @@ from tensorflow.keras import layers
 from tensorflow.keras.models import Model
 from tensorflow.keras import Input
 import tensorflow as tf
-from .Custom_Layers import Separator, DiversityCalculator
+from .Custom_Layers import Separator, DiversityCalculator, ABAgInteractionLayer, PositionalAttentionPooling, \
+    ResiduePositionMask
 
 
 def Discriminator(atoms_per_res=5, feature_dim=30):
@@ -85,23 +86,7 @@ class MaskedGlobalAveragePooling2D(layers.Layer):
         return sum_vals / count_vals
 
     def compute_output_shape(self, input_shape):
-        return (input_shape[0], input_shape[-1])
-
-
-class ResiduePositionMask(layers.Layer):
-    """Creates a mask for non-padded residue positions."""
-
-    def __init__(self, **kwargs):
-        super(ResiduePositionMask, self).__init__(**kwargs)
-
-    def call(self, inputs):
-        # inputs shape: (batch, residues, atoms, features)
-        # Create residue-level mask
-        mask = tf.reduce_sum(tf.abs(inputs), axis=[2, 3], keepdims=True)  # (batch, residues, 1, 1)
-        return tf.cast(mask > 0, tf.float32)
-
-    def compute_output_shape(self, input_shape):
-        return (input_shape[0], input_shape[1], 1, 1)
+        return input_shape[0], input_shape[-1]
 
 
 def Generator(atoms_per_res=5, feature_dim=30, ab_max_len=92, ag_max_len=97, n_sparse_mutations=22):
@@ -111,15 +96,20 @@ def Generator(atoms_per_res=5, feature_dim=30, ab_max_len=92, ag_max_len=97, n_s
     # Separate conserved parts (coordinates + atom type)
     conserved_parts = Separator()(ab_input)  # Shape: (batch, 92, 5, 8)
 
-    # Context extraction with masked pooling
-    ab_conv = layers.Conv2D(128, (3, 1), activation='relu', padding='same')(ab_input)
-    ab_features = MaskedGlobalAveragePooling2D()(ab_conv)
+    # **Key Enhancement: Model AB-AG interactions first**
+    ab_with_ag_context = ABAgInteractionLayer(hidden_dim=64)([ab_input, ag_input])
+
+    # Feature extraction with interaction-aware AB and original AG
+    ab_conv = layers.Conv2D(128, (3, 1), activation='relu', padding='same')(ab_with_ag_context)
+    ab_features = PositionalAttentionPooling(hidden_dim=128)(ab_conv)
 
     ag_conv = layers.Conv2D(128, (3, 1), activation='relu', padding='same')(ag_input)
-    ag_features = MaskedGlobalAveragePooling2D()(ag_conv)
+    ag_features = PositionalAttentionPooling(hidden_dim=128)(ag_conv)
 
-    # Combined context
+    # Combined context with interaction information
     context = layers.Concatenate()([ab_features, ag_features])
+    context = layers.Dense(256, activation='relu')(context)
+    context = layers.Dropout(0.1)(context)  # Add some regularization
     context = layers.Dense(256, activation='relu')(context)
 
     # Generate mutation probabilities per residue position
