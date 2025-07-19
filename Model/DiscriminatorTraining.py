@@ -111,31 +111,39 @@ def Train(args):
         gbsa_scaled = label_scaler.fit_transform(gbsa)
 
         print("Calling the dataset")
-        validity_labels = np.ones_like(gbsa_scaled)
+        # Create dummy labels for the diversity calculator output
+        diversity_labels = np.zeros_like(gbsa_scaled)  # Assuming diversity output is same shape as gbsa
 
-        # ab = np.expand_dims(ab, axis=3)  # from (batch, 92, 5, 34) -> (batch, 92, 5, 1, 34)
-        # ag = np.expand_dims(ag, axis=3)  # same for ag
+        # Ensure data types are float32
+        ab = ab.astype(np.float32)
+        ag = ag.astype(np.float32)
+        gbsa_scaled = gbsa_scaled.astype(np.float32)
+        diversity_labels = diversity_labels.astype(np.float32)
 
+        # Create model first to get the actual output names
+        print("Creating model to get output names...")
+        model = Discriminator()
+
+        # Create dataset with the correct output names
         dataset = tf.data.Dataset.from_tensor_slices((
             {'ab_input': ab, 'ag_input': ag},
-            {'gbsa_prediction': gbsa_scaled, 'validity': validity_labels}
+            {'gbsa_prediction': gbsa_scaled, 'diversity': diversity_labels}
         ))
         val_size = int(0.2 * len(gbsa_scaled))
         val_dataset = dataset.take(val_size).batch(args['batch']).prefetch(tf.data.AUTOTUNE)
         train_dataset = dataset.skip(val_size).batch(args['batch']).prefetch(tf.data.AUTOTUNE)
 
         print("Compiling the model...")
-        model = Discriminator()
         optimizer = Adam(learning_rate=args["lr"])
         model.compile(
             optimizer=optimizer,
             loss={
                 'gbsa_prediction': 'mse',
-                'validity': 'binary_crossentropy'
+                'diversity_calculator': 'mse'
             },
             metrics={
                 'gbsa_prediction': ['mae'],
-                'validity': ['accuracy']
+                'diversity_calculator': ['mae']
             }
         )
         print("Training begins")

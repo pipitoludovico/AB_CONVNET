@@ -1,133 +1,135 @@
 from keras import Model, metrics
 import tensorflow as tf
+from .Custom_Layers import DiversityCalculator, Separator
+
+from keras import Model, metrics
+import tensorflow as tf
+from .Custom_Layers import DiversityCalculator, Separator
 
 
 class cGAN(Model):
-    # Pass label_scaler as an argument to __init__
-    def __init__(self, discriminator, generator, label_scaler):
+    def __init__(self, discriminator, generator, label_scaler,
+                 diversity_weight=1.0, property_weight=0.5, inter_batch_diversity_weight=1.0):
         super().__init__()
-        self.loss_fn = None
+
         self.discriminator = discriminator
         self.generator = generator
-        self.g_optimizer = None
-        self.d_optimizer = None
-        self.validity_weight = 5
-
-        # Additional metrics for discriminator
-        self.d_gbsa_loss_metric = tf.keras.metrics.Mean(name="d_gbsa_loss")
-        self.d_validity_loss_metric = tf.keras.metrics.Mean(name="d_validity_loss")
-        self.d_validity_real_metric = tf.keras.metrics.Mean(name="d_validity_real")
-
-        # Additional metrics for generator
-        self.g_gbsa_loss_metric = tf.keras.metrics.Mean(name="g_gbsa_loss")
-        self.g_validity_loss_metric = tf.keras.metrics.Mean(name="g_validity_loss")
-        self.g_validity_fake_metric = tf.keras.metrics.Mean(name="gen_validity_fake")
-
-        # Store the label_scaler for de-normalization
         self.label_scaler = label_scaler
 
-        # Metrics for training progress
+        # Loss weights
+        self.diversity_weight = diversity_weight
+        self.property_weight = property_weight
+        self.inter_batch_diversity_weight = inter_batch_diversity_weight
+
+        # Loss function
+        self.loss_fn = tf.keras.losses.MeanAbsoluteError()
+
+        # Optimizers will be set during compile
+        self.g_optimizer = None
+        self.d_optimizer = None
+
+        # Create metric containers
+        self._build_metrics()
+
+    def _build_metrics(self):
+        # Discriminator metrics
         self.d_loss_metric = metrics.Mean(name='d_loss')
-        self.g_loss_metric = metrics.Mean(name='g_loss')
+        self.d_gbsa_loss_metric = metrics.Mean(name='d_gbsa_loss')
+        self.d_diversity_loss_metric = metrics.Mean(name='d_diversity_loss')
         self.d_gbsa_mae_metric = metrics.MeanAbsoluteError(name='d_gbsa_mae')
 
-        # Metric for the scaled GBSA (what the model directly optimizes)
-        self.g_fake_gbsa_mean_scaled_metric = metrics.Mean(name='gen_fake_gbsa_mean_scaled')
+        # Generator metrics
+        self.g_loss_metric = metrics.Mean(name='g_loss')
+        self.g_gbsa_loss_metric = metrics.Mean(name='g_gbsa_loss')
+        self.g_diversity_loss_metric = metrics.Mean(name='g_diversity_loss')
+        self.g_property_loss_metric = metrics.Mean(name='g_property_loss')
 
-        # NEW: Metric for the DENORMALIZED GBSA score
-        self.g_fake_gbsa_mean_denormalized_metric = metrics.Mean(name='gen_fake_gbsa_mean_denormalized')
+        # GBSA metrics (scaled and denormalized)
+        self.g_fake_gbsa_mean_scaled_metric = metrics.Mean(name='g_fake_gbsa_scaled')
+        self.g_fake_gbsa_mean_denormalized_metric = metrics.Mean(name='g_fake_gbsa_denormalized')
 
-    def compile(self, d_optimizer, g_optimizer, loss_fn):
-        super().compile()
+        # Diversity metrics
+        self.real_diversity_metric = metrics.Mean(name='real_diversity')
+        self.fake_diversity_metric = metrics.Mean(name='fake_diversity')
+        self.fake_entropy_metric = metrics.Mean(name='fake_entropy')
+        self.fake_unique_ratio_metric = metrics.Mean(name='fake_unique_ratio')
+        self.fake_evenness_metric = metrics.Mean(name='fake_evenness')
+
+    def compile(self, d_optimizer, g_optimizer, **kwargs):
+        super().compile(**kwargs)
         self.d_optimizer = d_optimizer
         self.g_optimizer = g_optimizer
-        self.loss_fn = loss_fn
 
     @property
     def metrics(self):
-        # Return all metrics you want to track
-        return [self.d_loss_metric,
-                self.g_loss_metric,
-                self.d_gbsa_mae_metric,
-                self.g_fake_gbsa_mean_scaled_metric,
-                self.g_fake_gbsa_mean_denormalized_metric]  # Include the new metric
+        return [
+            self.d_loss_metric,
+            self.d_gbsa_loss_metric,
+            self.d_diversity_loss_metric,
+            self.d_gbsa_mae_metric,
+            self.g_loss_metric,
+            self.g_gbsa_loss_metric,
+            self.g_diversity_loss_metric,
+            self.g_property_loss_metric,
+            self.g_fake_gbsa_mean_scaled_metric,
+            self.g_fake_gbsa_mean_denormalized_metric,
+            self.real_diversity_metric,
+            self.fake_diversity_metric,
+            self.fake_entropy_metric,
+            self.fake_unique_ratio_metric,
+            self.fake_evenness_metric,
+        ]
 
-    @tf.function
     def train_step(self, data):
-        (real_ab, real_ag), real_gbsa = data  # real_gbsa here is already scaled by label_scaler
+        (real_ab, real_ag), real_gbsa = data
 
-        # --- Train Discriminator (GBSA Predictor) ---
-        with tf.GradientTape() as tape:
-            predicted_gbsa_real, validity_real = self.discriminator((real_ab, real_ag), training=True)
-
-            # GBSA prediction loss
+        # === Discriminator step ===
+        with tf.GradientTape() as d_tape:
+            predicted_gbsa_real, diversity_score = self.discriminator([real_ab, real_ag], training=True)
             d_gbsa_loss = self.loss_fn(real_gbsa, predicted_gbsa_real)
 
-            # Validity loss (real antibodies should have high validity ~1.0)
-            real_validity_targets = tf.ones_like(validity_real)  # Target validity = 1.0 for real antibodies
-            d_validity_loss = self.loss_fn(real_validity_targets, validity_real)
+        d_grads = d_tape.gradient(d_gbsa_loss, self.discriminator.trainable_weights)
+        self.d_optimizer.apply_gradients(zip(d_grads, self.discriminator.trainable_weights))
 
-            # Combined discriminator loss
-            d_loss = d_gbsa_loss + self.validity_weight * d_validity_loss
+        # === Generator step ===
+        with tf.GradientTape() as g_tape:
+            fake_ab, fake_diversity = self.generator([real_ab, real_ag], training=True)
+            predicted_gbsa_fake, _ = self.discriminator([fake_ab, real_ag], training=False)  # Fixed: fake*ab -> fake_ab
 
-        grads = tape.gradient(d_loss, self.discriminator.trainable_weights)
-        self.d_optimizer.apply_gradients(zip(grads, self.discriminator.trainable_weights))
+            # GBSA loss
+            g_gbsa_loss = -tf.reduce_mean(predicted_gbsa_fake)
 
-        # Update discriminator metrics
-        self.d_loss_metric.update_state(d_loss)
-        self.d_gbsa_loss_metric.update_state(d_gbsa_loss)
-        self.d_validity_loss_metric.update_state(d_validity_loss)
-        self.d_gbsa_mae_metric.update_state(real_gbsa, predicted_gbsa_real)
-        self.d_validity_real_metric.update_state(validity_real)
+            # Diversity loss (the higher the better, so we minimize negative diversity)
+            diversity_loss = -tf.reduce_mean(fake_diversity)  # Fixed: changed to negative for proper minimization
 
-        # --- Train Generator ---
-        with tf.GradientTape() as genTape:
-            fake_ab = self.generator([real_ab, real_ag], training=True)
-            predicted_gbsa_fake, validity_fake = self.discriminator([fake_ab, real_ag], training=False)
+            # Inter-batch similarity (cosine)
+            fake_ab_last22 = fake_ab[..., 8:]  # (B, R, 5, 22)
+            batch_size = tf.shape(fake_ab)[0]
+            flat = tf.reshape(fake_ab_last22, [batch_size, -1])  # (B, R*5*22)
+            normed = tf.nn.l2_normalize(flat, axis=1)
+            sim_matrix = tf.matmul(normed, normed, transpose_b=True)
+            mask = tf.linalg.band_part(tf.ones_like(sim_matrix), 0, -1) - tf.eye(batch_size)
+            sim_values = tf.boolean_mask(sim_matrix, tf.cast(mask, tf.bool))
+            inter_batch_diversity_loss = tf.reduce_mean(sim_values)
 
-            # GBSA improvement loss (maximize predicted GBSA)
-            g_gbsa_loss = tf.reduce_mean(predicted_gbsa_fake)
+            # Total generator loss
+            g_loss = (
+                    g_gbsa_loss
+                    + self.diversity_weight * diversity_loss
+                    + self.inter_batch_diversity_weight * inter_batch_diversity_loss
+            )
 
-            # Validity loss (generated antibodies should also have high validity)
-            fake_validity_targets = tf.ones_like(validity_fake)
-            g_validity_loss = -self.loss_fn(fake_validity_targets,
-                                            validity_fake)  # Negative because we want to minimize this
-
-            # Combined generator loss
-            g_loss = g_gbsa_loss + self.validity_weight * g_validity_loss
-
-        g_grads = genTape.gradient(g_loss, self.generator.trainable_weights)
+        g_grads = g_tape.gradient(g_loss, self.generator.trainable_weights)
         self.g_optimizer.apply_gradients(zip(g_grads, self.generator.trainable_weights))
 
-        # Update generator metrics (scaled)
-        self.g_loss_metric.update_state(g_loss)
-        self.g_gbsa_loss_metric.update_state(g_gbsa_loss)
-        self.g_validity_loss_metric.update_state(g_validity_loss)
-        self.g_fake_gbsa_mean_scaled_metric.update_state(predicted_gbsa_fake)
-        self.g_validity_fake_metric.update_state(validity_fake)
-
-        # Denormalize GBSA for interpretability
-        denormalized_gbsa_fake = tf.numpy_function(
-            func=lambda x: self.label_scaler.inverse_transform(x.reshape(-1, 1)).flatten(),
-            inp=[predicted_gbsa_fake],
-            Tout=tf.float32,
-            name='denormalize_gbsa_fake_op',
-        )
-        denormalized_gbsa_fake.set_shape([None])
-
-        self.g_fake_gbsa_mean_denormalized_metric.update_state(denormalized_gbsa_fake)
+        # Optional: compute inter-batch diversity metric (1 - similarity)
+        inter_batch_diversity = 1.0 - tf.reduce_mean(sim_values)
 
         return {
-            "d_loss": self.d_loss_metric.result(),
-            "d_gbsa_loss": self.d_gbsa_loss_metric.result(),
-            "d_validity_loss": self.d_validity_loss_metric.result(),
-            "d_gbsa_mae": self.d_gbsa_mae_metric.result(),
-            "d_validity_real": self.d_validity_real_metric.result(),
-
-            "g_loss": self.g_loss_metric.result(),
-            "g_gbsa_loss": self.g_gbsa_loss_metric.result(),
-            "g_validity_loss": self.g_validity_loss_metric.result(),
-            "gen_fake_gbsa_mean_scaled": self.g_fake_gbsa_mean_scaled_metric.result(),
-            "gen_fake_gbsa_mean_denormalized": self.g_fake_gbsa_mean_denormalized_metric.result(),
-            "gen_validity_fake": self.g_validity_fake_metric.result(),
+            "d_loss": d_gbsa_loss,
+            "g_loss": g_loss,
+            "g_gbsa_loss": g_gbsa_loss,
+            "diversity_loss": diversity_loss,
+            "inter_batch_diversity_loss": inter_batch_diversity_loss,
+            "inter_batch_diversity": inter_batch_diversity
         }

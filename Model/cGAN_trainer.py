@@ -2,7 +2,6 @@ import os
 import numpy as np
 import tensorflow as tf
 from keras.optimizers import Adam
-from keras.losses import MeanAbsoluteError
 from sklearn.preprocessing import StandardScaler
 from Model.Models import Generator, Discriminator
 from Model.cGAN import cGAN
@@ -54,21 +53,18 @@ def TrainAndGenerate(pretrained_discriminator_model_path=None,
     gan.compile(
         d_optimizer=Adam(learning_rate=0.0001),
         g_optimizer=Adam(learning_rate=0.0001),
-        loss_fn=MeanAbsoluteError()
     )
 
     os.makedirs(save_dir, exist_ok=True)
 
-    # --- Helper functions (no changes needed for scope issue here) ---
-
-    def evaluate_predicted_gbsa(generator, discriminator, evaluation_data, scaler):
+    def evaluate_predicted_gbsa(generator_, discriminator_, evaluation_data, scaler):
         """
         Evaluate the predicted GBSA scores for generated antibodies.
         Returns the mean predicted GBSA score IN ORIGINAL UNITS.
         """
         predicted_gbsa_scores = []
         # Keep track of the input and generated examples if a new best is found
-        best_eval_sample = {
+        best_evalued_samples = {
             'ab_input': None,
             'ag_input': None,
             'generated_ab': None,
@@ -76,17 +72,17 @@ def TrainAndGenerate(pretrained_discriminator_model_path=None,
         }
 
         # Iterate through the evaluation data
-        for batch_idx, data_batch in enumerate(evaluation_data):
+        for batch_idx, data_batch_ in enumerate(evaluation_data):
             if batch_idx >= 5:  # Limit to 5 batches for evaluation
                 break
 
-            (ab_data, ag_data), _ = data_batch
+            (ab_data, ag_data), _ = data_batch_
 
             # Generate mutated antibodies
-            generated_ab = generator([ab_data, ag_data], training=False)
+            generated_ab, generated_variety = generator_([ab_data, ag_data], training=False)
 
             # Get predicted GBSA from discriminator (still in scaled units)
-            predicted_gbsa_scaled, _ = discriminator([generated_ab, ag_data], training=False)
+            predicted_gbsa_scaled, _ = discriminator_([generated_ab, ag_data], training=False)
 
             # De-normalize the predicted GBSA scores
             predicted_gbsa_denormalized = scaler.inverse_transform(
@@ -100,18 +96,18 @@ def TrainAndGenerate(pretrained_discriminator_model_path=None,
             min_gbsa_in_batch_idx = np.argmin(predicted_gbsa_denormalized)
             min_gbsa_in_batch = predicted_gbsa_denormalized[min_gbsa_in_batch_idx]
 
-            if min_gbsa_in_batch < best_eval_sample['predicted_gbsa']:
-                best_eval_sample['predicted_gbsa'] = min_gbsa_in_batch
+            if min_gbsa_in_batch < best_evalued_samples['predicted_gbsa']:
+                best_evalued_samples['predicted_gbsa'] = min_gbsa_in_batch
                 # Ensure these are numpy arrays for saving
-                best_eval_sample['ab_input'] = ab_data.numpy()[min_gbsa_in_batch_idx]
-                best_eval_sample['ag_input'] = ag_data.numpy()[min_gbsa_in_batch_idx]
-                best_eval_sample['generated_ab'] = generated_ab.numpy()[min_gbsa_in_batch_idx]
+                best_evalued_samples['ab_input'] = ab_data.numpy()[min_gbsa_in_batch_idx]
+                best_evalued_samples['ag_input'] = ag_data.numpy()[min_gbsa_in_batch_idx]
+                best_evalued_samples['generated_ab'] = generated_ab.numpy()[min_gbsa_in_batch_idx]
 
         mean_gbsa = np.mean(predicted_gbsa_scores) if predicted_gbsa_scores else float('inf')
-        return mean_gbsa, best_eval_sample
+        return mean_gbsa, best_evalued_samples
 
-    def save_best_generator(generator, epoch, predicted_gbsa_score, current_best_gbsa,
-                            sample_data, save_dir, feature_scaler):  # Added sample_data and feature_scaler
+    def save_best_generator(generator_, epoch_, predicted_gbsa_score, current_best_gbsa,
+                            sample_data, save_dir_, feature_scaler_):  # Added sample_data and feature_scaler
         """
         Save full generator model and a sample if this is the best (most negative) predicted GBSA score.
         Returns the updated best_predicted_gbsa value.
@@ -120,13 +116,13 @@ def TrainAndGenerate(pretrained_discriminator_model_path=None,
             updated_best_gbsa = predicted_gbsa_score
 
             # Save the full model in Keras format
-            best_model_path = os.path.join(save_dir, 'best_generator.keras')
-            generator.save(best_model_path)
+            best_model_path = os.path.join(save_dir_, 'best_generator.keras')
+            generator_.save(best_model_path)
 
             print(f"NEW BEST Predicted GBSA (Denormalized): {updated_best_gbsa:.4f} - Full generator model saved!")
 
             # --- Save the sample antibody and antigen data ---
-            sample_filepath = os.path.join(save_dir, f'best_gbsa_sample_epoch_{epoch}.npz')
+            sample_filepath = os.path.join(save_dir, f'best_gbsa_sample_epoch_{epoch_}.npz')
 
             # Inverse transform coordinates for the sample data if they were scaled
             # The 'evaluate_predicted_gbsa' function passes in the scaled data.
@@ -138,15 +134,15 @@ def TrainAndGenerate(pretrained_discriminator_model_path=None,
             generated_ab_original_coords = np.copy(sample_data['generated_ab'])
 
             # Only inverse transform the first 3 features (x,y,z coordinates)
-            ab_input_original_coords[..., :3] = feature_scaler.inverse_transform(
+            ab_input_original_coords[..., :3] = feature_scaler_.inverse_transform(
                 ab_input_original_coords[..., :3].reshape(-1, 3)
             ).reshape(ab_input_original_coords[..., :3].shape)
 
-            ag_input_original_coords[..., :3] = feature_scaler.inverse_transform(
+            ag_input_original_coords[..., :3] = feature_scaler_.inverse_transform(
                 ag_input_original_coords[..., :3].reshape(-1, 3)
             ).reshape(ag_input_original_coords[..., :3].shape)
 
-            generated_ab_original_coords[..., :3] = feature_scaler.inverse_transform(
+            generated_ab_original_coords[..., :3] = feature_scaler_.inverse_transform(
                 generated_ab_original_coords[..., :3].reshape(-1, 3)
             ).reshape(generated_ab_original_coords[..., :3].shape)
 
@@ -192,10 +188,10 @@ def TrainAndGenerate(pretrained_discriminator_model_path=None,
 
             # Print current step logs (if you want more frequent updates)
             if step % 100 == 0:
-                print(f"Step {step}: "
+                print(f"Step {int(step)}: "
                       f"d_loss={logs['d_loss']:.4f} "
-                      f"g_loss={logs['g_loss']:.4f} "
-                      f"mean_gbsa={logs['gen_fake_gbsa_mean_denormalized']:.4f}")
+                      f"g_gbsa_loss={logs['g_gbsa_loss']:.4f} "
+                      f"inter_batch_diversity={logs['inter_batch_diversity']:.4f} ")
 
         # End of epoch evaluation
         print(f"Evaluating predicted GBSA at end of epoch {epoch + 1}...")

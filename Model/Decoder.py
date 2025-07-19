@@ -262,6 +262,10 @@ class AntibodyMutator:
         print(f"CHECK MATRIX AB per {pdb_id}\n {ab_matrix[0][0]}")
         print(f"CHECK MATRIX AG per {pdb_id}\n {ag_matrix[0][0]}")
 
+        # IMPORTANT: Verify one-hot encoding is correct in input data
+        # self._verify_onehot_encoding(ab_matrix, "Antibody")
+        # self._verify_onehot_encoding(ag_matrix, "Antigen")
+
         return ab_matrix, ag_matrix, pdb_id
 
     def generate_mutated_antibody(self, ab_matrix: np.ndarray, ag_matrix: np.ndarray) -> np.ndarray:
@@ -273,16 +277,120 @@ class AntibodyMutator:
             ag_matrix: Antigen matrix (shape: ag_max_length, 5, features)
 
         Returns:
-            Mutated antibody matrix with same shape as input
+            Mutated antibody matrix with same shape as input and proper one-hot encoding
         """
-        # Add batch dimension
         ab_batch = np.expand_dims(ab_matrix, axis=0)
         ag_batch = np.expand_dims(ag_matrix, axis=0)
 
-        mutated_ab = self.model.predict([ab_batch, ag_batch], verbose=1)
+        mutated_ab, _ = self.model.predict([ab_batch, ag_batch], verbose=0)
+        print(mutated_ab)
 
         # Remove batch dimension
-        return mutated_ab[0]
+        mutated_ab = mutated_ab[0]  # Shape: (ab_max_length, 5, features)
+
+        # CRITICAL: Convert probabilities back to proper one-hot encoding
+        mutated_ab = self._convert_to_onehot(mutated_ab)
+
+        # Verify the conversion worked
+        self._verify_onehot_encoding(mutated_ab, "Generated Antibody")
+
+        return mutated_ab
+
+    def _convert_to_onehot(self, matrix: np.ndarray) -> np.ndarray:
+        """
+        Convert amino acid probabilities to proper one-hot encoding.
+
+        Args:
+            matrix: Matrix with shape (residues, atoms, features)
+                    Features: [x, y, z, atom_name_onehot(5), residue_onehot(22)]
+
+        Returns:
+            Matrix with same shape but proper one-hot encoding for amino acids
+        """
+        result = matrix.copy()
+
+        for res_idx in range(matrix.shape[0]):
+            for atom_idx in range(matrix.shape[1]):
+                # Skip if this is a padded/zero entry
+                if np.all(matrix[res_idx, atom_idx] == 0):
+                    continue
+
+                # Extract amino acid probabilities (last 22 features)
+                aa_probs = matrix[res_idx, atom_idx, -22:]
+
+                # Convert to one-hot: find max probability and create sparse vector
+                max_idx = np.argmax(aa_probs)
+                aa_onehot = np.zeros(22)
+                aa_onehot[max_idx] = 1.0
+
+                # Replace the probabilities with proper one-hot
+                result[res_idx, atom_idx, -22:] = aa_onehot
+
+        return result
+
+    def _verify_onehot_encoding(self, matrix: np.ndarray, matrix_name: str):
+        """
+        Verify that the amino acid encoding is properly one-hot (sparse).
+
+        Args:
+            matrix: Matrix to verify
+            matrix_name: Name for logging purposes
+        """
+        print(f"\nVerifying one-hot encoding for {matrix_name}:")
+
+        # Check a few non-zero residues
+        checked_residues = 0
+        for res_idx in range(min(5, matrix.shape[0])):  # Check first 5 residues
+            residue_atoms = matrix[res_idx]
+
+            # Skip padded residues
+            if np.all(residue_atoms == 0):
+                continue
+
+            # Check first atom of this residue
+            aa_encoding = residue_atoms[0, -22:]  # Last 22 features
+
+            # Count non-zero values
+            non_zero_count = np.count_nonzero(aa_encoding)
+            max_value = np.max(aa_encoding)
+            sum_values = np.sum(aa_encoding)
+
+            print(f"  Residue {res_idx}: non-zero={non_zero_count}, max={max_value:.6f}, sum={sum_values:.6f}")
+
+            # Proper one-hot should have exactly 1 non-zero value = 1.0
+            if non_zero_count == 1 and np.isclose(max_value, 1.0) and np.isclose(sum_values, 1.0):
+                print(f"    ✓ Proper one-hot encoding")
+            else:
+                print(f"    ✗ NOT proper one-hot encoding (probabilities detected)")
+
+            checked_residues += 1
+            if checked_residues >= 3:  # Only check first 3 non-zero residues
+                break
+
+    @staticmethod
+    def convert_to_onehot(antibody_data):
+        """
+        Convert amino acid probabilities to one-hot encoding for all atoms
+
+        Args:
+            antibody_data: tensor of shape (batch, residues, atoms, features)
+                          where last 22 features are amino acid probabilities
+
+        Returns:
+            tensor with same shape but last 22 features are one-hot encoded
+        """
+        # Split features into non-amino acid features and amino acid probabilities
+        other_features = antibody_data[:, :, :, :-22]  # First 8 features
+        aa_probs = antibody_data[:, :, :, -22:]  # Last 22 features (probabilities)
+
+        # Convert probabilities to one-hot by taking argmax
+        aa_indices = tf.argmax(aa_probs, axis=-1)  # (batch, residues, atoms)
+        aa_onehot = tf.one_hot(aa_indices, depth=22)  # (batch, residues, atoms, 22)
+
+        # Concatenate back together
+        result = tf.concat([other_features, aa_onehot], axis=-1)
+
+        return result
 
     def _decode_matrix_to_pdb(self, matrix: np.ndarray, chain_id: str, output_path: str):
         """
