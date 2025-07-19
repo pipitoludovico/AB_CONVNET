@@ -120,14 +120,12 @@ def Train(args):
         gbsa_scaled = gbsa_scaled.astype(np.float32)
         diversity_labels = diversity_labels.astype(np.float32)
 
-        # Create model first to get the actual output names
-        print("Creating model to get output names...")
         model = Discriminator()
 
         # Create dataset with the correct output names
         dataset = tf.data.Dataset.from_tensor_slices((
             {'ab_input': ab, 'ag_input': ag},
-            {'gbsa_prediction': gbsa_scaled, 'diversity': diversity_labels}
+            {'gbsa_prediction': gbsa_scaled, 'diversity_calculator': diversity_labels}
         ))
         val_size = int(0.2 * len(gbsa_scaled))
         val_dataset = dataset.take(val_size).batch(args['batch']).prefetch(tf.data.AUTOTUNE)
