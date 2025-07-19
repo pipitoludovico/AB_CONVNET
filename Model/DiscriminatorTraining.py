@@ -111,8 +111,8 @@ def Train(args):
         gbsa_scaled = label_scaler.fit_transform(gbsa)
 
         print("Calling the dataset")
-        # Create dummy labels for the diversity calculator output
-        diversity_labels = np.zeros_like(gbsa_scaled)  # Assuming diversity output is same shape as gbsa
+        # Create dummy labels for the diversity calculator output (won't be used for training)
+        diversity_labels = np.zeros_like(gbsa_scaled)
 
         # Ensure data types are float32
         ab = ab.astype(np.float32)
@@ -133,11 +133,17 @@ def Train(args):
 
         print("Compiling the model...")
         optimizer = Adam(learning_rate=args["lr"])
+
+        # OPTION 1: Set loss weight to 0 for diversity_calculator
         model.compile(
             optimizer=optimizer,
             loss={
                 'gbsa_prediction': 'mse',
                 'diversity_calculator': 'mse'
+            },
+            loss_weights={
+                'gbsa_prediction': 1.0,
+                'diversity_calculator': 0.0  # Don't train on this output
             },
             metrics={
                 'gbsa_prediction': ['mae'],
